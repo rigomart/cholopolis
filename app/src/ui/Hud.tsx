@@ -24,14 +24,27 @@ interface Props {
   onInspect: (index: number) => void;
   onNewRoom: () => void;
   onHome: () => void;
-  /** Who is shaking the dice right now, if anyone. */
+  onResetCamera?: () => void;
   shaking: string | null;
-  onShake: (on: boolean) => void;
+  onRoll: () => void;
+  rolling: boolean;
+  /** Whether the dice thrown for roll `rollId` are on the board yet. */
+  diceLanded: (rollId: number) => boolean;
 }
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
 
-export function Hud({ table, onInspect, onNewRoom, onHome, shaking, onShake }: Props) {
+export function Hud({
+  table,
+  onInspect,
+  onNewRoom,
+  onHome,
+  onResetCamera,
+  shaking,
+  onRoll,
+  rolling,
+  diceLanded,
+}: Props) {
   const { state, you, spectators, send } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
@@ -45,10 +58,33 @@ export function Hud({ table, onInspect, onNewRoom, onHome, shaking, onShake }: P
     <div class="hud">
       <Players state={state} you={you} onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null} />
       <Log entries={state.log} />
+      {onResetCamera && !sheet && (
+        <button
+          type="button"
+          class="camera-reset"
+          onClick={onResetCamera}
+          aria-label="Centrar tablero"
+          title="Centrar tablero"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="7" />
+            <path d="M12 2v6m0 8v6M2 12h6m8 0h6" />
+          </svg>
+          <span>Centrar tablero</span>
+        </button>
+      )}
 
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
-        <ActionBar state={state} me={me} act={act} shaking={shaking} onShake={onShake} />
+        <ActionBar state={state} me={me} act={act} shaking={shaking} onRoll={onRoll} rolling={rolling} />
         <div class="toolbar">
           {canTrade && (
             <>
@@ -88,7 +124,13 @@ export function Hud({ table, onInspect, onNewRoom, onHome, shaking, onShake }: P
         )}
       </div>
 
-      <CardToast card={state.card} state={state} />
+      <CardToast
+        card={state.card}
+        state={state}
+        diceLanded={diceLanded}
+        yours={state.turn?.playerId === you && state.turn.stage === "roll"}
+        held={shaking !== null && shaking === you}
+      />
 
       {sheet?.kind === "props" && me && (
         <Properties state={state} me={me} act={act} onInspect={onInspect} onClose={() => setSheet(null)} />
@@ -160,10 +202,11 @@ interface ActionBarProps {
   me: Player | undefined;
   act: (a: Action) => void;
   shaking: string | null;
-  onShake: (on: boolean) => void;
+  onRoll: () => void;
+  rolling: boolean;
 }
 
-function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
+function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps) {
   if (state.phase !== "playing" || !state.turn) return null;
   const current = findPlayer(state, state.turn.playerId);
   const owing = debtors(state);
@@ -212,10 +255,11 @@ function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
     case "roll":
       return (
         <div class="actions">
+          <p class="dice-instructions">Agarra los dados y suéltalos con un impulso.</p>
           {me.inJail ? (
             <>
               <p>Estás en el Penal (intento {me.jailTurns + 1} de 3).</p>
-              <RollButton label="Tirar por dobles" onShake={onShake} onRoll={() => act({ type: "roll" })} />
+              <RollButton label="Tirar por dobles" onRoll={onRoll} disabled={rolling} />
               <button type="button" disabled={me.cash < JAIL_FINE} onClick={() => act({ type: "payJailFine" })}>
                 Pagar fianza {money(JAIL_FINE)}
               </button>
@@ -228,8 +272,8 @@ function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
           ) : (
             <RollButton
               label={state.turn.doubles > 0 ? "¡Dobles! Tira otra vez" : "Tirar dados"}
-              onShake={onShake}
-              onRoll={() => act({ type: "roll" })}
+              onRoll={onRoll}
+              disabled={rolling}
             />
           )}
         </div>
@@ -280,25 +324,68 @@ function Log({ entries }: { entries: LogEntry[] }) {
   );
 }
 
-/** Shows each newly drawn card for a few seconds. */
-function CardToast({ card, state }: { card: DrawnCard | null; state: PublicState }) {
+/** A card stays up this long, or this much less once another is ready behind it. */
+const CARD_MS = 5000;
+const CARD_QUEUED_MS = 2500;
+
+/**
+ * Shows each newly drawn card for a few seconds, in order, each once the roll that drew it is on
+ * the board: landed, cut short by a later roll, or never animated (reduced motion, reconnect).
+ */
+function CardToast({
+  card,
+  state,
+  diceLanded,
+  yours,
+  held,
+}: {
+  card: DrawnCard | null;
+  state: PublicState;
+  diceLanded: (rollId: number) => boolean;
+  /** Your roll is next: the card lets clicks through to the dice under it. */
+  yours: boolean;
+  /** You picked the dice up, so you're done reading. */
+  held: boolean;
+}) {
   const [seenId, setSeenId] = useState(card?.id ?? 0);
-  const [shown, setShown] = useState<DrawnCard | null>(null);
+  const [queue, setQueue] = useState<{ card: DrawnCard; rollId: number }[]>([]);
+  const [shown, setShown] = useState<{ card: DrawnCard; at: number } | null>(null);
   if (card && card.id !== seenId) {
     setSeenId(card.id);
-    setShown(card);
+    setQueue([...queue, { card, rollId: state.rollId }]);
   }
+  const next = queue[0];
+  useEffect(() => {
+    if (!next) return;
+    // Polled: the scene starts the throw after this effect runs, and it lands seconds later.
+    const id = setInterval(() => {
+      if (shown && performance.now() - shown.at < CARD_QUEUED_MS) return;
+      if (!diceLanded(next.rollId)) return;
+      setShown({ card: next.card, at: performance.now() });
+      setQueue((q) => q.slice(1));
+    }, 100);
+    return () => clearInterval(id);
+  }, [next, shown, diceLanded]);
   useEffect(() => {
     if (!shown) return;
-    const id = setTimeout(() => setShown(null), 5000);
+    const id = setTimeout(() => setShown(null), CARD_MS);
     return () => clearTimeout(id);
   }, [shown]);
+  useEffect(() => {
+    if (held) setShown(null);
+  }, [held]);
   if (!shown) return null;
-  const who = findPlayer(state, shown.playerId);
+  const { card: drawn } = shown;
+  const who = findPlayer(state, drawn.playerId);
   return (
-    <button type="button" class={`card-toast ${shown.deck}`} onClick={() => setShown(null)}>
-      <span class="card-deck">{shown.deck === "suerte" ? "Suerte" : "Caja Municipal"}</span>
-      <span class="card-text">{shown.text}</span>
+    <button
+      key={drawn.id}
+      type="button"
+      class={`card-toast ${drawn.deck}${yours ? " passive" : ""}`}
+      onClick={() => setShown(null)}
+    >
+      <span class="card-deck">{drawn.deck === "suerte" ? "Suerte" : "Caja Municipal"}</span>
+      <span class="card-text">{drawn.text}</span>
       <span class="card-who">para {who?.name}</span>
     </button>
   );

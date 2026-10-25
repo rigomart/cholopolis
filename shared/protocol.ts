@@ -1,3 +1,4 @@
+import { type DiceHold, parseDiceHold, parseDiceToss } from "./dice.ts";
 import type { Action, PublicState, TradeSide } from "./game.ts";
 import { PIECES } from "./pieces.ts";
 
@@ -5,13 +6,14 @@ export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "leave" }
   | { type: "action"; action: Action }
-  /** The current player is shaking the dice before a roll; relayed to everyone, never stored. */
-  | { type: "shake"; on: boolean };
+  | { type: "diceHold"; rollId: number; hold: DiceHold | null }
+  /** Sent only by tabs still running an older client; ignored without a reply. */
+  | { type: "outdated" };
 
 export type ServerMessage =
   | { type: "state"; state: PublicState; you: string | null; spectators: string[] }
   | { type: "error"; message: string }
-  | { type: "shake"; playerId: string; on: boolean };
+  | { type: "diceHold"; playerId: string; rollId: number; hold: DiceHold | null };
 
 export const ROOM_PATTERN = /^[a-z0-9]{6,12}$/;
 export const MAX_MESSAGE_BYTES = 4096;
@@ -32,7 +34,6 @@ function parseAction(v: unknown): Action | null {
   if (!isObject(v)) return null;
   switch (v.type) {
     case "start":
-    case "roll":
     case "buy":
     case "decline":
     case "endTurn":
@@ -40,6 +41,17 @@ function parseAction(v: unknown): Action | null {
     case "useJailCard":
     case "bankrupt":
       return { type: v.type };
+    case "roll": {
+      if (v.rollId !== undefined && !isCount(v.rollId)) return null;
+      // The toss is cosmetic, so one that doesn't parse (or an older client's `toss`) is dropped
+      // and the roll still goes ahead.
+      const diceToss = parseDiceToss(v.diceToss);
+      return {
+        type: "roll",
+        ...(diceToss ? { diceToss } : {}),
+        ...(v.rollId === undefined ? {} : { rollId: v.rollId as number }),
+      };
+    }
     case "choosePiece":
       return Number.isInteger(v.piece) && (v.piece as number) >= 0 && (v.piece as number) < PIECES.length
         ? { type: "choosePiece", piece: v.piece as number }
@@ -75,7 +87,13 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isObject(v)) return null;
   if (v.type === "join" && typeof v.name === "string") return { type: "join", name: v.name };
   if (v.type === "leave") return { type: "leave" };
-  if (v.type === "shake" && typeof v.on === "boolean") return { type: "shake", on: v.on };
+  if (v.type === "diceHold" && isCount(v.rollId)) {
+    const hold = v.hold === null ? null : parseDiceHold(v.hold);
+    if (v.hold !== null && !hold) return null;
+    return { type: "diceHold", rollId: v.rollId, hold };
+  }
+  // The hold message before `diceHold`, in a shape this table no longer relays.
+  if (v.type === "diceDrag") return { type: "outdated" };
   if (v.type === "action") {
     const action = parseAction(v.action);
     return action ? { type: "action", action } : null;

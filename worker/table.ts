@@ -6,16 +6,19 @@ import {
   addPlayer,
   autoPlay,
   cleanName,
+  canDragDice,
   createGame,
   debtors,
   findPlayer,
   GameError,
   type GameState,
   removePlayer,
+  restoreGame,
   syncPresence,
   toPublic,
 } from "../shared/game.ts";
 import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage } from "../shared/protocol.ts";
+import { MessageBudget } from "./rateLimit.ts";
 
 interface Attachment {
   token: string;
@@ -29,7 +32,6 @@ const TURN_MS = 60_000;
 const AWAY_MS = 10_000;
 /** An abandoned table forgets everything after this long. */
 const EXPIRE_MS = 24 * 60 * 60_000;
-/** At most this many messages per socket per window. */
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 5_000;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
@@ -49,13 +51,15 @@ export class Table extends DurableObject<Env> {
   /** What the current deadline is waiting for; a new value restarts the clock. */
   private waitingOn = "";
   private reportedOpen: boolean | null = null;
-  private readonly recentMessages = new WeakMap<WebSocket, number[]>();
+  private readonly actions = new MessageBudget(RATE_LIMIT, RATE_WINDOW_MS);
+  private readonly drags = new MessageBudget(80, RATE_WINDOW_MS);
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     void ctx.blockConcurrencyWhile(async () => {
-      this.game = (await ctx.storage.get<GameState>("game")) ?? createGame();
+      const saved = await ctx.storage.get<GameState>("game");
+      this.game = saved ? restoreGame(saved) : createGame();
       this.tokens = (await ctx.storage.get<Record<string, string>>("tokens")) ?? {};
       this.room = (await ctx.storage.get<string>("room")) ?? "";
       this.waitingOn = (await ctx.storage.get<string>("waitingOn")) ?? "";
@@ -86,8 +90,13 @@ export class Table extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== "string" || raw.length > MAX_MESSAGE_BYTES) return;
-    if (this.flooding(ws)) return this.send(ws, { type: "error", message: "Más despacio, por favor." });
     const msg = parseClientMessage(raw);
+    if (msg?.type === "outdated") return;
+    if (msg?.type === "diceHold") {
+      if (!this.drags.allows(ws)) return;
+    } else if (!this.actions.allows(ws)) {
+      return this.send(ws, { type: "error", message: "Más despacio, por favor." });
+    }
     if (!msg) return this.send(ws, { type: "error", message: "Mensaje inválido." });
     const att = ws.deserializeAttachment() as Attachment;
 
@@ -106,7 +115,7 @@ export class Table extends DurableObject<Env> {
           // Seat the socket first so the new player counts as present in this same commit.
           this.setAttachment(att);
           const id = att.playerId;
-          return this.commit((g) => {
+          return await this.commit((g) => {
             if (id && g.phase === "lobby" && !findPlayer(g, id)) addPlayer(g, id, name);
           });
         }
@@ -117,21 +126,24 @@ export class Table extends DurableObject<Env> {
           this.setAttachment(att);
           delete this.tokens[att.token];
           await this.ctx.storage.put("tokens", this.tokens);
-          return this.commit((g) => removePlayer(g, id));
+          return await this.commit((g) => removePlayer(g, id));
         }
-        case "shake": {
-          // Only the player about to roll can shake; others see it live, nothing is stored.
-          const turn = this.game.turn;
-          if (this.game.phase !== "playing" || turn?.playerId !== att.playerId || turn.stage !== "roll") return;
+        case "diceHold": {
+          if (!canDragDice(this.game, att.playerId, msg.rollId)) return;
           for (const other of this.sockets(ws)) {
-            this.send(other, { type: "shake", playerId: turn.playerId, on: msg.on });
+            this.send(other, {
+              type: "diceHold",
+              playerId: att.playerId as string,
+              rollId: msg.rollId,
+              hold: msg.hold,
+            });
           }
           return;
         }
         case "action": {
           const id = att.playerId;
           if (!id) return this.send(ws, { type: "error", message: "Estás mirando esta partida." });
-          return this.commit((g) => act(g, id, msg.action, rng));
+          return await this.commit((g) => act(g, id, msg.action, rng));
         }
       }
     } catch (error) {
@@ -174,15 +186,6 @@ export class Table extends DurableObject<Env> {
   }
 
   // ---------------------------------------------------------------- internals
-
-  /** Every message clones, saves and broadcasts the game, so each socket gets a budget. */
-  private flooding(ws: WebSocket): boolean {
-    const now = Date.now();
-    const recent = (this.recentMessages.get(ws) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-    recent.push(now);
-    this.recentMessages.set(ws, recent);
-    return recent.length > RATE_LIMIT;
-  }
 
   private sockets(except?: WebSocket): WebSocket[] {
     return this.ctx.getWebSockets().filter((ws) => ws !== except && ws.readyState === WebSocket.OPEN);

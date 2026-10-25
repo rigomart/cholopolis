@@ -384,6 +384,21 @@ select {
   pointer-events: auto;
 }
 
+.camera-reset {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .players {
   position: absolute;
   top: 1rem;
@@ -581,6 +596,10 @@ select {
   text-align: left;
   box-shadow: 8px 8px 0 var(--ink);
   animation: card-in 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.card-toast.passive {
+  pointer-events: none;
 }
 
 .card-toast.suerte {
@@ -898,6 +917,21 @@ select {
 /* ------------------------------------------------------------------ narrow screens */
 
 @media (max-width: 900px) {
+  .camera-reset {
+    top: calc(max(0.5rem, env(safe-area-inset-top)) + 3.9rem);
+    left: 0.5rem;
+    transform: none;
+    padding: 0.5rem;
+  }
+
+  .camera-reset span {
+    display: none;
+  }
+
+  .hud:has(.camera-reset) .log {
+    width: min(20rem, calc(100% - 4.5rem));
+  }
+
   .players {
     top: max(0.5rem, env(safe-area-inset-top));
     left: 0.5rem;

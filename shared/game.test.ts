@@ -2,17 +2,20 @@ import { describe, expect, test } from "bun:test";
 
 import { JAIL_SQUARE, STARTING_CASH } from "./board.ts";
 import { CARDS } from "./cards.ts";
+import type { DiceToss } from "./dice.ts";
 import {
   act,
   type Action,
   addPlayer,
   autoPlay,
   buildError,
+  canDragDice,
   createGame,
   type GameState,
   GameError,
   type Player,
   rentFor,
+  restoreGame,
   syncPresence,
 } from "./game.ts";
 import { parseClientMessage } from "./protocol.ts";
@@ -95,6 +98,84 @@ describe("lobby", () => {
 });
 
 describe("turns", () => {
+  test("cosmetic tosses cannot change RNG values, movement, or Penal doubles", () => {
+    const wild = {
+      position: { x: 999, y: -999, z: -999 },
+      rotation: { x: 0, y: 0, z: 0, w: 5 },
+      velocity: { x: 0, y: 0, z: 999 },
+      spin: { x: 999, y: 0, z: 0 },
+    };
+    const toss = { dice: [wild, { ...wild, position: { x: -999, y: 999, z: 999 } }] } as DiceToss;
+    for (const jailed of [false, true]) {
+      const plain = playing();
+      const thrown = playing();
+      p(plain, "a").inJail = p(thrown, "a").inJail = jailed;
+      run(plain, "a", { type: "roll" }, dice(2, 2));
+      run(thrown, "a", { type: "roll", diceToss: toss }, dice(2, 2));
+      expect(thrown.dice).toEqual([2, 2]);
+      expect(thrown.players).toEqual(plain.players);
+      expect(thrown.turn).toEqual(plain.turn);
+      expect(thrown.diceToss?.dice[0].position).toEqual({ x: 4.08, y: 0.65, z: -4.08 });
+      expect(thrown.diceToss?.dice[0].rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
+      expect(thrown.diceToss?.dice[0].velocity).toEqual({ x: 0, y: 0, z: 20 });
+      expect(thrown.rollId).toBe(1);
+    }
+  });
+
+  test("button and automatic rolls clear the previous toss; stale rolls are refused", () => {
+    const g = playing();
+    const die = {
+      position: { x: 0, y: 1, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      velocity: { x: 1, y: 1, z: 1 },
+      spin: { x: 1, y: 1, z: 1 },
+    };
+    const other = { ...die, position: { x: 1, y: 1, z: 0 } };
+    run(g, "a", { type: "roll", diceToss: { dice: [die, other] }, rollId: 0 }, dice(1, 1));
+    expect(g.diceToss?.dice[1]).toEqual(other);
+    if (g.turn?.stage === "buy") run(g, "a", { type: "decline" });
+    expect(() => run(g, "a", { type: "roll", rollId: 0 })).toThrow("tiraste");
+    autoPlay(g, dice(1, 2));
+    expect(g.diceToss).toBeNull();
+  });
+
+  test("a toss that doesn't parse is dropped and the roll still happens", () => {
+    for (const diceToss of [{ point: { x: 1, z: 1 } }, { dice: [] }, "junk"]) {
+      const g = playing();
+      run(g, "a", { type: "roll", diceToss: diceToss as unknown as DiceToss }, dice(3, 4));
+      expect(g.dice).toEqual([3, 4]);
+      expect(g.rollId).toBe(1);
+      expect(g.diceToss).toBeNull();
+    }
+  });
+
+  test("a game saved by an older version loads without its toss and plays on", () => {
+    const die = {
+      position: { x: 0, y: 1, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      velocity: { x: 1, y: 1, z: 1 },
+      spin: { x: 1, y: 1, z: 1 },
+    };
+    const { diceToss: _, ...current } = playing();
+    const legacy = {
+      point: { x: -2.8, z: 3.15 },
+      rotation: { x: 0, y: 0, z: 0 },
+      velocity: { x: 2, z: -4 },
+      spin: { x: 5, y: 1, z: -4 },
+    };
+    const old = { ...current, rollId: 7, dice: [3, 4], toss: legacy } as unknown as GameState;
+    const g = restoreGame(structuredClone(old));
+    expect("toss" in g).toBe(false);
+    expect(g.diceToss).toBeNull();
+    expect(g.dice).toEqual([3, 4]);
+    run(g, "a", { type: "roll", rollId: 7 }, dice(1, 2));
+    expect(g.rollId).toBe(8);
+
+    const other = { ...die, position: { x: 1, y: 1, z: 0 } };
+    expect(restoreGame({ ...g, diceToss: { dice: [die, "bad"] } } as unknown as GameState).diceToss).toBeNull();
+    expect(restoreGame({ ...g, diceToss: { dice: [die, other] } }).diceToss).toEqual({ dice: [die, other] });
+  });
+
   test("rolling moves the piece and offers an unowned street", () => {
     const g = playing();
     run(g, "a", { type: "roll" }, dice(1, 2));
@@ -313,4 +394,22 @@ describe("protocol", () => {
     expect(parseClientMessage(JSON.stringify({ type: "action", action: { type: "hack" } }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana" }))).toEqual({ type: "join", name: "Ana" });
   });
+});
+
+test("only a connected current player at this roll can drag, including in the Penal", () => {
+  const g = playing();
+  expect(canDragDice(g, "a", 0)).toBe(true);
+  p(g, "a").inJail = true;
+  expect(canDragDice(g, "a", 0)).toBe(true);
+  expect(canDragDice(g, "b", 0)).toBe(false);
+  expect(canDragDice(g, null, 0)).toBe(false);
+  expect(canDragDice(g, "a", 1)).toBe(false);
+  p(g, "b").cash = -1;
+  expect(canDragDice(g, "a", 0)).toBe(false);
+  p(g, "b").cash = 0;
+  p(g, "a").connected = false;
+  expect(canDragDice(g, "a", 0)).toBe(false);
+  p(g, "a").connected = true;
+  if (g.turn) g.turn.stage = "done";
+  expect(canDragDice(g, "a", 0)).toBe(false);
 });

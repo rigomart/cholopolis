@@ -17,6 +17,7 @@ import {
   unmortgageCost,
 } from "./board.ts";
 import { CARDS } from "./cards.ts";
+import { type DiceToss, parseDiceToss } from "./dice.ts";
 import { PIECES } from "./pieces.ts";
 
 export const PLAYER_COLORS = [
@@ -116,6 +117,11 @@ export interface GameState {
   turn: Turn | null;
   dice: [number, number] | null;
   rollId: number;
+  /**
+   * How the dice left the hand. Not called `toss`, the older shape's name, so tabs still
+   * running that client ignore it and fall back to their own automatic throw.
+   */
+  diceToss: DiceToss | null;
   card: DrawnCard | null;
   moves: Move[];
   trades: Trade[];
@@ -133,7 +139,7 @@ export type PublicState = Omit<GameState, "decks">;
 export type Action =
   | { type: "start" }
   | { type: "choosePiece"; piece: number }
-  | { type: "roll" }
+  | { type: "roll"; diceToss?: DiceToss; rollId?: number }
   | { type: "buy" }
   | { type: "decline" }
   | { type: "endTurn" }
@@ -165,6 +171,7 @@ export function createGame(): GameState {
     turn: null,
     dice: null,
     rollId: 0,
+    diceToss: null,
     card: null,
     moves: [],
     trades: [],
@@ -174,6 +181,12 @@ export function createGame(): GameState {
     nextId: 1,
     decks: { suerte: [], caja: [] },
   };
+}
+
+/** A game as saved by any version: dice data this one can't replay is dropped. */
+export function restoreGame(saved: GameState): GameState {
+  const { toss: _legacy, ...g } = saved as GameState & { toss?: unknown };
+  return { ...g, diceToss: parseDiceToss(g.diceToss) };
 }
 
 export function toPublic(g: GameState): PublicState {
@@ -199,6 +212,18 @@ export function activePlayers(g: PublicState): Player[] {
 
 export function debtors(g: PublicState): Player[] {
   return activePlayers(g).filter((p) => p.cash < 0);
+}
+
+export function canDragDice(g: PublicState, playerId: string | null, rollId: number): boolean {
+  const p = findPlayer(g, playerId);
+  return (
+    g.phase === "playing" &&
+    g.turn?.stage === "roll" &&
+    g.turn.playerId === playerId &&
+    g.rollId === rollId &&
+    Boolean(p?.connected && !p.bankrupt) &&
+    debtors(g).length === 0
+  );
 }
 
 function prop(g: PublicState, index: number): Property {
@@ -423,7 +448,8 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
 
   switch (action.type) {
     case "roll":
-      return roll(g, p, rng);
+      if (action.rollId !== undefined && action.rollId !== g.rollId) fail("Ya tiraste esos dados.");
+      return roll(g, p, rng, action.diceToss);
     case "buy":
       return buy(g, p);
     case "decline": {
@@ -521,13 +547,15 @@ function requireTurn(g: GameState, p: Player, stage: Stage): Turn {
   return t;
 }
 
-function roll(g: GameState, p: Player, rng: Rng): void {
+function roll(g: GameState, p: Player, rng: Rng, toss?: DiceToss): void {
   const t = requireTurn(g, p, "roll");
   const d1 = 1 + Math.floor(rng() * 6);
   const d2 = 1 + Math.floor(rng() * 6);
   const total = d1 + d2;
   const doubles = d1 === d2;
   g.dice = [d1, d2];
+  // Cosmetic only: one that doesn't parse is dropped rather than refusing the roll.
+  g.diceToss = parseDiceToss(toss);
   g.rollId++;
   log(g, `${p.name} sacó ${d1} y ${d2}${doubles ? " (¡dobles!)" : ""}.`);
   t.rolledDoubles = false;
