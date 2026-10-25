@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { JAIL_SQUARE, STARTING_CASH } from "./board.ts";
 import { CARDS } from "./cards.ts";
+import type { DiceToss } from "./dice.ts";
 import {
   act,
   type Action,
@@ -97,12 +98,13 @@ describe("lobby", () => {
 
 describe("turns", () => {
   test("cosmetic tosses cannot change RNG values, movement, or Penal doubles", () => {
-    const toss = {
-      point: { x: 999, z: -999 },
-      velocity: { x: 0, z: 999 },
+    const wild = {
+      position: { x: 999, y: -999, z: -999 },
+      rotation: { x: 0, y: 0, z: 0, w: 5 },
+      velocity: { x: 0, y: 0, z: 999 },
       spin: { x: 999, y: 0, z: 0 },
-      rotation: { x: 0, y: 0, z: 0 },
     };
+    const toss = { dice: [wild, wild] } as DiceToss;
     for (const jailed of [false, true]) {
       const plain = playing();
       const thrown = playing();
@@ -112,21 +114,23 @@ describe("turns", () => {
       expect(thrown.dice).toEqual([2, 2]);
       expect(thrown.players).toEqual(plain.players);
       expect(thrown.turn).toEqual(plain.turn);
-      expect(thrown.toss?.point).toEqual({ x: 5, z: -5 });
-      expect(thrown.toss?.velocity).toEqual({ x: 0, z: 12 });
+      expect(thrown.toss?.dice[0].position).toEqual({ x: 4.2, y: 0.65, z: -4.2 });
+      expect(thrown.toss?.dice[0].rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
+      expect(thrown.toss?.dice[0].velocity).toEqual({ x: 0, y: 0, z: 20 });
       expect(thrown.rollId).toBe(1);
     }
   });
 
   test("button and automatic rolls clear the previous toss; stale rolls are refused", () => {
     const g = playing();
-    const toss = {
-      point: { x: 0, z: 0 },
-      velocity: { x: 1, z: 1 },
+    const die = {
+      position: { x: 0, y: 1, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      velocity: { x: 1, y: 1, z: 1 },
       spin: { x: 1, y: 1, z: 1 },
-      rotation: { x: 0, y: 0, z: 0 },
     };
-    run(g, "a", { type: "roll", toss, rollId: 0 }, dice(1, 1));
+    run(g, "a", { type: "roll", toss: { dice: [die, die] }, rollId: 0 }, dice(1, 1));
+    expect(g.toss?.dice[1]).toEqual(die);
     if (g.turn?.stage === "buy") run(g, "a", { type: "decline" });
     expect(() => run(g, "a", { type: "roll", rollId: 0 })).toThrow("tiraste");
     autoPlay(g, dice(1, 2));

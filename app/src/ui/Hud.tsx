@@ -28,11 +28,23 @@ interface Props {
   shaking: string | null;
   onRoll: () => void;
   rolling: boolean;
+  /** When the dice in play come to rest, in `performance.now()` time. */
+  diceLandAt: () => number;
 }
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
 
-export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shaking, onRoll, rolling }: Props) {
+export function Hud({
+  table,
+  onInspect,
+  onNewRoom,
+  onHome,
+  onResetCamera,
+  shaking,
+  onRoll,
+  rolling,
+  diceLandAt,
+}: Props) {
   const { state, you, spectators, send } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
@@ -112,7 +124,7 @@ export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shakin
         )}
       </div>
 
-      <CardToast card={state.card} state={state} />
+      <CardToast card={state.card} state={state} diceLandAt={diceLandAt} />
 
       {sheet?.kind === "props" && me && (
         <Properties state={state} me={me} act={act} onInspect={onInspect} onClose={() => setSheet(null)} />
@@ -306,14 +318,33 @@ function Log({ entries }: { entries: LogEntry[] }) {
   );
 }
 
-/** Shows each newly drawn card for a few seconds. */
-function CardToast({ card, state }: { card: DrawnCard | null; state: PublicState }) {
+/** Shows each newly drawn card for a few seconds, once the dice that led to it have landed. */
+function CardToast({
+  card,
+  state,
+  diceLandAt,
+}: {
+  card: DrawnCard | null;
+  state: PublicState;
+  diceLandAt: () => number;
+}) {
   const [seenId, setSeenId] = useState(card?.id ?? 0);
+  const [waiting, setWaiting] = useState<DrawnCard | null>(null);
   const [shown, setShown] = useState<DrawnCard | null>(null);
   if (card && card.id !== seenId) {
     setSeenId(card.id);
-    setShown(card);
+    setWaiting(card);
   }
+  useEffect(() => {
+    if (!waiting) return;
+    // Polled: the scene starts the throw after this effect runs.
+    const id = setInterval(() => {
+      if (performance.now() < diceLandAt()) return;
+      setShown(waiting);
+      setWaiting(null);
+    }, 100);
+    return () => clearInterval(id);
+  }, [waiting, diceLandAt]);
   useEffect(() => {
     if (!shown) return;
     const id = setTimeout(() => setShown(null), 5000);

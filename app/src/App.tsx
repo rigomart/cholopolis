@@ -95,6 +95,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const [shaking, setShaking] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
   const rollId = state?.rollId;
+  const diceLandAt = useCallback(() => scene?.diceLandAt ?? 0, [scene]);
   const turnKey = `${state?.turn?.playerId}:${state?.turn?.stage}`;
 
   useEffect(() => {
@@ -195,8 +196,9 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           onHome={onHome}
           onResetCamera={scene ? () => scene.resetCamera() : undefined}
           shaking={shaking}
-          onRoll={() => roll()}
+          onRoll={() => scene?.throwDice() || roll()}
           rolling={rolling || status !== "open" || shaking === you}
+          diceLandAt={diceLandAt}
         />
       )}
       {state && inspect !== null && <Deed state={state} index={inspect} onClose={() => setInspect(null)} />}

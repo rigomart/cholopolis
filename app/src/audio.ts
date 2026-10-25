@@ -55,8 +55,12 @@ export function startRattle(intensity: () => number): () => void {
   return () => clearTimeout(timer);
 }
 
-export function playLanding(strength: number): void {
+const PITCH = { board: 950, wall: 720, die: 2900, hand: 2100 };
+
+/** One impact, as loud as it was hard. Dice on dice click higher than dice on the board. */
+export function playKnock(strength: number, surface: keyof typeof PITCH): void {
   const volume = Math.max(0, Math.min(1, strength)) * 0.8;
-  knock(0, volume, 900 + Math.random() * 300);
-  knock(0.012, volume * 0.7, 1300 + Math.random() * 400);
+  const pitch = PITCH[surface] * (0.85 + Math.random() * 0.3);
+  knock(0, volume, pitch);
+  if (surface !== "die") knock(0.012, volume * 0.6, pitch * 1.4);
 }

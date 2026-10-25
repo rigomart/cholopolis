@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
 export const DIE = 0.6;
+/** Radius of the rounded edges and corners. */
+export const DIE_ROUNDING = DIE * 0.16;
 
 /** Which value faces each axis: opposite faces add up to 7, like a real die. */
 const FACES: { value: number; normal: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3 }[] = [
@@ -48,16 +50,14 @@ const PIPS: Record<number, [number, number][]> = {
   ],
 };
 
-/** Rotation that puts each value on top (+y). */
-export const FACE_UP: Record<number, THREE.Quaternion> = Object.fromEntries(
-  FACES.map((f) => [f.value, new THREE.Quaternion().setFromUnitVectors(f.normal, new THREE.Vector3(0, 1, 0))]),
-);
+/** The die-local direction each value faces. */
+export const FACE_NORMALS: Record<number, THREE.Vector3> = Object.fromEntries(FACES.map((f) => [f.value, f.normal]));
 
 /** A bone-white die with rounded edges and sunken ink pips; the single pip is chicha pink. */
 export function buildDie(): THREE.Group {
   const group = new THREE.Group();
   const body = new THREE.Mesh(
-    new RoundedBoxGeometry(DIE, DIE, DIE, 4, DIE * 0.16),
+    new RoundedBoxGeometry(DIE, DIE, DIE, 4, DIE_ROUNDING),
     new THREE.MeshStandardMaterial({ color: "#fffaf0", roughness: 0.32 }),
   );
   body.castShadow = true;

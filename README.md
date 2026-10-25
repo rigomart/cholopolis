@@ -32,6 +32,10 @@ Classic Monopoly with these choices:
   has visited in 24 hours deletes itself.
 - `app/` is the client: Preact for the panels and plain three.js for the board
   (`app/src/scene`). The board face is drawn onto a canvas texture.
+- Dice are thrown with a small deterministic physics solver (`app/src/scene/dicePhysics.ts`).
+  The thrower's client sends how both dice left the hand with the roll; the table validates
+  it and rolls the values itself. Every client replays the same throw from that, and turns
+  each die model so the rolled value ends on top.
 - Players are anonymous. A random token in localStorage maps a browser to its seat, so a
   reload or dropped connection puts you back where you were.
 
