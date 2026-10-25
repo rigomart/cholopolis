@@ -638,7 +638,7 @@ export class BoardScene {
     return CAMERA_DIRECTION.clone().multiplyScalar(distance).add(HOME_TARGET);
   }
 
-  private resetCamera(): void {
+  resetCamera(): void {
     this.cameraTween = {
       from: this.camera.position.clone(),
       fromTarget: this.controls.target.clone(),

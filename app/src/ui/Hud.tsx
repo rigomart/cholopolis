@@ -24,6 +24,7 @@ interface Props {
   onInspect: (index: number) => void;
   onNewRoom: () => void;
   onHome: () => void;
+  onResetCamera?: () => void;
   /** Who is shaking the dice right now, if anyone. */
   shaking: string | null;
   onShake: (on: boolean) => void;
@@ -31,7 +32,7 @@ interface Props {
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
 
-export function Hud({ table, onInspect, onNewRoom, onHome, shaking, onShake }: Props) {
+export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shaking, onShake }: Props) {
   const { state, you, spectators, send } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
@@ -45,6 +46,29 @@ export function Hud({ table, onInspect, onNewRoom, onHome, shaking, onShake }: P
     <div class="hud">
       <Players state={state} you={you} onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null} />
       <Log entries={state.log} />
+      {onResetCamera && !sheet && (
+        <button
+          type="button"
+          class="camera-reset"
+          onClick={onResetCamera}
+          aria-label="Centrar tablero"
+          title="Centrar tablero"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="7" />
+            <path d="M12 2v6m0 8v6M2 12h6m8 0h6" />
+          </svg>
+          <span>Centrar tablero</span>
+        </button>
+      )}
 
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
