@@ -1,0 +1,25 @@
+// One Worker serves the built client from dist/ and runs the game:
+// each table is a Table Durable Object, and a single Lobby Durable Object tracks open tables.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cholopolis",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-20",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/ws/*"],
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "TABLE", "class_name": "Table" },
+      { "name": "LOBBY", "class_name": "Lobby" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Table", "Lobby"] }],
+  "observability": {
+    "enabled": true,
+  },
+  "routes": [{ "pattern": "cholopolis.rigos.dev", "custom_domain": true }],
+}
