@@ -1,10 +1,20 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+import {
+  clamp,
+  DICE_DRAG_EXPIRE_MS,
+  DICE_DRAG_INTERVAL_MS,
+  DICE_GRAB_LIMIT,
+  DICE_HOLD_MAX_MS,
+  type DiceDrag,
+  type DiceToss,
+} from "../../../shared/dice.ts";
 import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { playLanding, startRattle } from "../audio.ts";
 import { drawBoard, FONT, INK } from "./boardTexture.ts";
 import { buildDie, DIE, FACE_UP } from "./dice.ts";
+import { automaticToss, DICE_HELD_Y, DICE_OFFSETS, DICE_STEP, type DiceThrow, simulateThrow } from "./diceMotion.ts";
 import {
   BOARD_SIZE,
   buildingSpot,
@@ -21,18 +31,10 @@ import { registerThumbnails } from "./thumbnails.ts";
 
 const THICKNESS = 0.35;
 const TOP = THICKNESS;
-const DICE_MS = 1100;
-/** Fractions of the throw when the dice hit the board, for the landing sound. */
-const BOUNCES = [0.4, 0.8];
-/** Shaking stops by itself if the roll never comes (a lost message, a closed tab). */
-const SHAKE_MAX_MS = 10_000;
-/** Where the dice settle: the empty corner of the centre, in front of the logo so they hide nothing. */
 const DICE_SPOTS: [Local, Local] = [
   { x: -3.4, z: 2.8 },
   { x: -2.5, z: 3.5 },
 ];
-/** Where the dice are held while being shaken. */
-const HAND = new THREE.Vector3(-2.95, TOP + 1.5, 3.15);
 const CAMERA_DIRECTION = new THREE.Vector3(0, 15.5, 13.5).normalize();
 /** Aim below the centre so the board sits above the action dock. */
 const HOME_TARGET = new THREE.Vector3(0, 0, 1.7);
@@ -59,16 +61,27 @@ interface PieceView {
 
 interface DieView {
   mesh: THREE.Group;
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  startQ: THREE.Quaternion;
+  halo: THREE.Mesh;
+  rest: THREE.Vector3;
   final: THREE.Quaternion;
-  spinAxis: THREE.Vector3;
+}
+
+interface DiceInput {
+  onDrag: (drag: DiceDrag | null) => void;
+  onRoll: (toss: DiceToss) => void;
+}
+
+interface Grab {
+  pointerId: number;
+  offset: Local;
+  samples: { point: Local; at: number }[];
+  started: number;
+  relayed: number;
 }
 
 const vec = (p: Local, y = TOP) => new THREE.Vector3(p.x, y, p.z);
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
-const jitter = () => (Math.random() - 0.5) * 0.3;
+const wrap = (v: number) => ((v + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
 const pieceKey = (piece: number, color: number) => `${piece}:${color}`;
 
 /** Heading (rotation about y) that points a model's +x along a board direction. */
@@ -121,8 +134,14 @@ export class BoardScene {
   private seenRoll = -1;
   private seenMove = 0;
   private throwStart = 0;
-  private throwMs = DICE_MS;
-  private shakeStart = 0;
+  private flight: DiceThrow | null = null;
+  private impactIndex = 0;
+  private diceInput: DiceInput | null = null;
+  private diceEnabled = false;
+  private grab: Grab | null = null;
+  private held: DiceDrag | null = null;
+  private heldUpdated = 0;
+  private awaitingRoll = false;
   private stopRattle: (() => void) | null = null;
   private lastFrame = 0;
   private cameraTween: { from: THREE.Vector3; fromTarget: THREE.Vector3; start: number } | null = null;
@@ -210,8 +229,16 @@ export class BoardScene {
     this.resize();
 
     const canvas = this.renderer.domElement;
-    canvas.addEventListener("pointerdown", (e) => (this.pointerDown = { x: e.clientX, y: e.clientY }));
-    canvas.addEventListener("pointerup", (e) => this.pick(e));
+    canvas.addEventListener("pointerdown", (e) => this.beginGrab(e), { capture: true });
+    canvas.addEventListener("pointermove", (e) => this.moveGrab(e));
+    canvas.addEventListener("pointerup", (e) => this.releaseGrab(e));
+    canvas.addEventListener("pointercancel", () => this.cancelDice());
+    canvas.addEventListener("lostpointercapture", (e) => {
+      if (this.grab?.pointerId === e.pointerId) this.cancelDice();
+    });
+    canvas.addEventListener("pointerleave", () => {
+      if (!this.grab) canvas.style.cursor = "";
+    });
     this.renderer.setAnimationLoop((time) => this.frame(time));
   }
 
@@ -220,7 +247,7 @@ export class BoardScene {
   }
 
   dispose(): void {
-    this.stopShaking();
+    this.cancelDice();
     registerThumbnails(null);
     this.renderer.setAnimationLoop(null);
     this.observer.disconnect();
@@ -233,133 +260,294 @@ export class BoardScene {
   update(state: PublicState | null): void {
     const first = this.state === null;
     const previousTurn = this.state?.turn;
+    const previousRoll = this.state?.rollId;
     // The lobby slowly circles the board; when play starts, glide back to the standard view.
     if (state?.phase === "playing" && this.state?.phase === "lobby") this.resetCamera();
     this.state = state;
     this.controls.autoRotate = !this.reducedMotion && (!state || state.phase !== "playing");
     if (!state) {
-      this.setShaking(false);
+      this.cancelDice();
       return this.syncPieces(null, true);
     }
 
     if (state.dice && state.rollId !== this.seenRoll) {
       const animate = !first && this.seenRoll !== -1;
-      this.stopShaking();
-      this.placeDice(state.dice, animate);
-    } else if (this.shakeStart && (state.turn?.playerId !== previousTurn?.playerId || state.turn?.stage !== "roll")) {
-      this.setShaking(false);
+      this.clearHold();
+      this.placeDice(state.dice, animate, state.toss ?? automaticToss(), state.rollId);
+    } else if (
+      state.turn?.playerId !== previousTurn?.playerId ||
+      state.turn?.stage !== "roll" ||
+      state.rollId !== previousRoll ||
+      !state.players.find((p) => p.id === state.turn?.playerId)?.connected
+    ) {
+      this.cancelDice();
     }
     this.seenRoll = state.rollId;
     this.syncPieces(state, first);
     this.syncBuildings(state);
   }
 
-  /** Lifts the dice and rattles them until the roll arrives, or drops them back if it doesn't. */
-  setShaking(on: boolean): void {
-    if (on === Boolean(this.shakeStart)) return;
-    if (on) {
-      this.shakeStart = performance.now();
-      this.throwStart = 0;
-      this.stopRattle = startRattle();
-      return;
-    }
-    this.stopShaking();
-    this.throwDice(350);
+  onDiceInput(input: DiceInput | null): void {
+    if (!input) this.cancelDice();
+    this.diceInput = input;
   }
 
-  // ---------------------------------------------------------------- dice
-
-  private createDice(): void {
-    for (const spot of DICE_SPOTS) {
-      const mesh = buildDie();
-      const rest = vec(spot, TOP + DIE / 2);
-      mesh.position.copy(rest);
-      this.scene.add(mesh);
-      this.dice.push({
-        mesh,
-        from: rest.clone(),
-        to: rest.clone(),
-        startQ: new THREE.Quaternion(),
-        final: new THREE.Quaternion(),
-        spinAxis: new THREE.Vector3(1, 0, 0),
-      });
-    }
-    this.placeDice([5, 3], false);
+  setDiceEnabled(enabled: boolean): void {
+    this.diceEnabled = enabled;
+    if (!enabled && this.grab) this.cancelDice();
+    if (!enabled) this.renderer.domElement.style.cursor = "";
   }
 
-  private stopShaking(): void {
-    this.shakeStart = 0;
-    this.stopRattle?.();
-    this.stopRattle = null;
+  showDiceDrag(drag: DiceDrag | null): void {
+    if (this.grab || this.awaitingRoll || this.throwStart) return;
+    if (!drag) return this.cancelDice();
+    this.holdDice(drag);
   }
 
-  private placeDice(values: [number, number], animate: boolean): void {
-    this.dice.forEach((die, n) => {
-      const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 1.2);
-      die.final = yaw.multiply(FACE_UP[values[n] ?? 1] ?? new THREE.Quaternion());
-      const spot = DICE_SPOTS[n === 0 ? 0 : 1];
-      die.to = vec({ x: spot.x + jitter(), z: spot.z + jitter() }, TOP + DIE / 2);
-      die.spinAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.3, Math.random() - 0.5).normalize();
-    });
-    if (animate && !this.reducedMotion) {
-      this.throwDice(DICE_MS);
-      playLanding(BOUNCES.map((b) => (b * DICE_MS) / 1000));
-    } else {
-      this.throwStart = 0;
+  cancelDice(): void {
+    const notify = Boolean(this.grab || this.awaitingRoll);
+    this.clearHold();
+    if (!this.throwStart)
       for (const die of this.dice) {
-        die.mesh.position.copy(die.to);
+        die.mesh.position.copy(die.rest);
         die.mesh.quaternion.copy(die.final);
       }
+    if (notify) this.diceInput?.onDrag(null);
+  }
+
+  private clearHold(): void {
+    const pointerId = this.grab?.pointerId;
+    this.grab = null;
+    this.held = null;
+    this.awaitingRoll = false;
+    this.controls.enabled = true;
+    this.stopRattle?.();
+    this.stopRattle = null;
+    const canvas = this.renderer.domElement;
+    canvas.style.cursor = "";
+    if (pointerId !== undefined && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+  }
+
+  private holdDice(drag: DiceDrag): void {
+    this.held = structuredClone(drag);
+    this.heldUpdated = performance.now();
+    this.stopRattle ??= startRattle(() => this.held?.intensity ?? 0);
+  }
+
+  private createDice(): void {
+    for (const [n, spot] of DICE_SPOTS.entries()) {
+      const mesh = buildDie();
+      const rest = vec(spot, TOP + DIE / 2);
+      const final = FACE_UP[n ? 3 : 5]!.clone();
+      mesh.position.copy(rest);
+      mesh.quaternion.copy(final);
+      this.scene.add(mesh);
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.46, 0.025, 6, 36),
+        new THREE.MeshBasicMaterial({ color: "#ffe500", transparent: true, opacity: 0.65 }),
+      );
+      halo.rotation.x = -Math.PI / 2;
+      halo.visible = false;
+      this.scene.add(halo);
+      this.dice.push({ mesh, halo, rest, final });
     }
   }
 
-  /** Animates each die from wherever it is now to its `to` spot and `final` orientation. */
-  private throwDice(ms: number): void {
-    this.throwStart = performance.now();
-    this.throwMs = ms;
+  private placeDice(values: [number, number], animate: boolean, toss: DiceToss, rollId: number): void {
+    this.flight = simulateThrow(toss, values, rollId);
+    this.impactIndex = 0;
+    this.dice.forEach((die, n) => {
+      const last = this.flight!.dice[n === 0 ? 0 : 1].at(-1)!;
+      die.rest.copy(last.position);
+      die.final.copy(last.rotation);
+      if (!animate || this.reducedMotion) {
+        die.mesh.position.copy(die.rest);
+        die.mesh.quaternion.copy(die.final);
+      }
+    });
+    this.throwStart = animate && !this.reducedMotion ? performance.now() : 0;
+  }
+
+  private animateDice(now: number, dt: number): void {
     for (const die of this.dice) {
-      die.from = die.mesh.position.clone();
-      die.startQ = die.mesh.quaternion.clone();
+      die.halo.visible = this.diceEnabled && !this.held && !this.throwStart;
+      die.halo.position.set(die.mesh.position.x, TOP + 0.015, die.mesh.position.z);
     }
-  }
-
-  private animateDice(now: number): void {
-    if (this.shakeStart) {
-      if (now - this.shakeStart > SHAKE_MAX_MS) return this.setShaking(false);
-      const lift = Math.min(1, (now - this.shakeStart) / 180);
+    const held = this.held;
+    if (held) {
+      if (
+        (this.grab && now - this.grab.started > DICE_HOLD_MAX_MS) ||
+        (!this.grab && !this.awaitingRoll && now - this.heldUpdated > DICE_DRAG_EXPIRE_MS)
+      )
+        return this.cancelDice();
+      held.intensity *= Math.exp(-dt * 6);
       this.dice.forEach((die, n) => {
-        const held = HAND.clone()
-          .add(new THREE.Vector3((n - 0.5) * 0.45, 0, 0))
-          .add(
-            new THREE.Vector3(
-              Math.sin(now / 41 + n * 2) * 0.09,
-              Math.sin(now / 29 + n) * 0.07,
-              Math.cos(now / 37 + n) * 0.09,
-            ),
-          );
-        die.mesh.position.lerpVectors(die.to, held, easeOut(lift));
-        const wobble = new THREE.Quaternion().setFromAxisAngle(
-          new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize(),
-          0.35,
-        );
-        die.mesh.quaternion.premultiply(wobble);
+        const target = new THREE.Vector3(held.point.x, DICE_HELD_Y, held.point.z).add(DICE_OFFSETS[n]!);
+        die.mesh.position.lerp(target, 1 - Math.exp(-dt * 24));
+        die.mesh.quaternion.setFromEuler(new THREE.Euler(held.rotation.x + n * 0.3, held.rotation.y, held.rotation.z));
       });
+      if (this.grab && now - this.grab.relayed >= DICE_DRAG_INTERVAL_MS) {
+        this.grab.relayed = now;
+        this.diceInput?.onDrag(structuredClone(held));
+      }
       return;
     }
-    if (!this.throwStart) return;
-    const t = Math.min(1, (now - this.throwStart) / this.throwMs);
-    const e = easeOut(t);
-    const rest = TOP + DIE / 2;
-    const spins = this.throwMs >= DICE_MS ? 4 : 0;
-    for (const die of this.dice) {
-      die.mesh.position.lerpVectors(die.from, die.to, e);
-      const fall = (die.from.y - rest) * (1 - t) ** 6;
-      const bounce = spins ? Math.abs(Math.sin(t * Math.PI * 2.5)) * (1 - t) * 1.2 : 0;
-      die.mesh.position.y = rest + fall + bounce;
-      const spin = new THREE.Quaternion().setFromAxisAngle(die.spinAxis, (1 - e) * Math.PI * spins);
-      die.mesh.quaternion.slerpQuaternions(die.startQ, die.final, e).premultiply(spin);
+    const flight = this.flight;
+    if (!this.throwStart || !flight) return;
+    const seconds = Math.min(flight.duration, (now - this.throwStart) / 1000);
+    const index = Math.floor(seconds / DICE_STEP);
+    const alpha = seconds / DICE_STEP - index;
+    this.dice.forEach((die, n) => {
+      const frames = flight.dice[n === 0 ? 0 : 1];
+      const a = frames[Math.min(index, frames.length - 1)]!;
+      const b = frames[Math.min(index + 1, frames.length - 1)]!;
+      die.mesh.position.lerpVectors(a.position, b.position, alpha);
+      die.mesh.quaternion.slerpQuaternions(a.rotation, b.rotation, alpha);
+    });
+    while (this.impactIndex < flight.impacts.length && flight.impacts[this.impactIndex]!.at <= seconds) {
+      const hit = flight.impacts[this.impactIndex++]!;
+      if (seconds - hit.at < 0.1) playLanding(hit.strength);
     }
-    if (t >= 1) this.throwStart = 0;
+    if (seconds >= flight.duration) this.throwStart = 0;
+  }
+
+  private pointerRay(e: PointerEvent): THREE.Raycaster {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(pointer, this.camera);
+    return ray;
+  }
+
+  private handPoint(e: PointerEvent): Local | null {
+    const point = this.pointerRay(e).ray.intersectPlane(
+      new THREE.Plane(new THREE.Vector3(0, 1, 0), -DICE_HELD_Y),
+      new THREE.Vector3(),
+    );
+    return point ? { x: point.x, z: point.z } : null;
+  }
+
+  private overDice(e: PointerEvent): boolean {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return this.dice.some((die) => {
+      const point = die.mesh.position.clone().project(this.camera);
+      const x = rect.left + ((point.x + 1) * rect.width) / 2;
+      const y = rect.top + ((1 - point.y) * rect.height) / 2;
+      return Math.hypot(e.clientX - x, e.clientY - y) <= (e.pointerType === "touch" ? 28 : 20);
+    });
+  }
+
+  private beginGrab(e: PointerEvent): void {
+    if (this.grab) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      return;
+    }
+    this.pointerDown = { x: e.clientX, y: e.clientY };
+    if (
+      e.button !== 0 ||
+      !e.isPrimary ||
+      !this.diceEnabled ||
+      !this.diceInput ||
+      this.throwStart ||
+      this.awaitingRoll ||
+      !this.overDice(e)
+    )
+      return;
+    const point = this.handPoint(e);
+    if (!point) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    this.pointerDown = null;
+    this.cameraTween = null;
+    this.controls.enabled = false;
+    const center = this.dice.reduce((sum, die) => sum.add(die.mesh.position), new THREE.Vector3()).multiplyScalar(0.5);
+    const drag: DiceDrag = {
+      point: { x: clamp(center.x, DICE_GRAB_LIMIT), z: clamp(center.z, DICE_GRAB_LIMIT) },
+      rotation: { x: 0, y: 0, z: 0 },
+      intensity: 0,
+    };
+    const now = performance.now();
+    this.grab = {
+      pointerId: e.pointerId,
+      offset: { x: drag.point.x - point.x, z: drag.point.z - point.z },
+      samples: [{ point: drag.point, at: now }],
+      started: now,
+      relayed: now,
+    };
+    this.holdDice(drag);
+    this.renderer.domElement.setPointerCapture(e.pointerId);
+    this.renderer.domElement.style.cursor = "grabbing";
+    this.diceInput.onDrag(drag);
+  }
+
+  private moveGrab(e: PointerEvent): void {
+    const grab = this.grab;
+    const held = this.held;
+    if (!grab || !held) {
+      this.renderer.domElement.style.cursor =
+        this.diceEnabled && !this.throwStart && !this.awaitingRoll && this.overDice(e) ? "grab" : "";
+      return;
+    }
+    if (e.pointerId !== grab.pointerId) return;
+    e.preventDefault();
+    const point = this.handPoint(e);
+    if (!point) return;
+    const next = {
+      x: clamp(point.x + grab.offset.x, DICE_GRAB_LIMIT),
+      z: clamp(point.z + grab.offset.z, DICE_GRAB_LIMIT),
+    };
+    const dx = next.x - held.point.x;
+    const dz = next.z - held.point.z;
+    const now = performance.now();
+    const elapsed = Math.max(0.008, (now - (grab.samples.at(-1)?.at ?? now)) / 1000);
+    held.rotation = {
+      x: wrap(held.rotation.x + dz * 1.7),
+      y: wrap(held.rotation.y + dx * 0.5),
+      z: wrap(held.rotation.z - dx * 1.7),
+    };
+    held.intensity = Math.min(1, Math.hypot(dx, dz) / elapsed / 12);
+    held.point = next;
+    grab.samples.push({ point: next, at: now });
+    grab.samples = grab.samples.filter((sample) => now - sample.at < 120);
+    this.heldUpdated = now;
+  }
+
+  private releaseGrab(e: PointerEvent): void {
+    const grab = this.grab;
+    const held = this.held;
+    if (!grab || !held) return this.pick(e);
+    if (e.pointerId !== grab.pointerId) return;
+    this.moveGrab(e);
+    const now = performance.now();
+    const first = grab.samples.find((sample) => now - sample.at <= 100) ?? grab.samples.at(-1)!;
+    const elapsed = Math.max(0.016, (now - first.at) / 1000);
+    const velocity = {
+      x: clamp((held.point.x - first.point.x) / elapsed, 12),
+      z: clamp((held.point.z - first.point.z) / elapsed, 12),
+    };
+    const toss: DiceToss = {
+      point: { ...held.point },
+      rotation: { ...held.rotation },
+      velocity,
+      spin: {
+        x: velocity.z * 1.6 + held.intensity * 5,
+        y: velocity.x * 0.6,
+        z: -velocity.x * 1.6 - held.intensity * 4,
+      },
+    };
+    this.grab = null;
+    this.awaitingRoll = true;
+    this.controls.enabled = true;
+    this.stopRattle?.();
+    this.stopRattle = null;
+    const canvas = this.renderer.domElement;
+    canvas.style.cursor = "";
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    this.diceInput?.onRoll(toss);
   }
 
   // ---------------------------------------------------------------- pieces
@@ -379,7 +567,7 @@ export class BoardScene {
     const bySquare = new Map<number, string[]>();
     for (const p of players) bySquare.set(p.position, [...(bySquare.get(p.position) ?? []), p.id]);
 
-    const walkAfter = this.throwStart ? this.throwStart + DICE_MS * 0.85 : 0;
+    const walkAfter = this.throwStart ? this.throwStart + (this.flight?.duration ?? 0) * 1000 : 0;
     const newMoves = state && !snap ? state.moves.filter((m) => m.id > this.seenMove) : [];
     if (state) this.seenMove = Math.max(this.seenMove, ...state.moves.map((m) => m.id));
 
@@ -616,18 +804,20 @@ export class BoardScene {
   private frame(now: number): void {
     const dt = this.lastFrame ? Math.min(0.1, (now - this.lastFrame) / 1000) : 0;
     this.lastFrame = now;
-    this.animateDice(now);
+    this.animateDice(now, dt);
     this.animatePieces(now, dt);
     this.animateCamera(now);
-    this.controls.update();
+    if (!this.grab) this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
 
   private resize(): void {
+    this.cancelDice();
     const { clientWidth: w, clientHeight: h } = this.container;
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
+    this.controls.maxDistance = Math.max(34, this.homePosition().distanceTo(HOME_TARGET) * 1.25);
     this.camera.position.copy(this.homePosition());
     this.camera.updateProjectionMatrix();
   }
@@ -639,6 +829,8 @@ export class BoardScene {
   }
 
   resetCamera(): void {
+    // Moving the camera under held dice would yank them away from the pointer.
+    if (this.grab) return;
     this.cameraTween = {
       from: this.camera.position.clone(),
       fromTarget: this.controls.target.clone(),
@@ -665,14 +857,7 @@ export class BoardScene {
     const down = this.pointerDown;
     this.pointerDown = null;
     if (!down || !this.pickHandler || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const pointer = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(pointer, this.camera);
-    const hit = ray.intersectObject(this.board)[0];
+    const hit = this.pointerRay(e).intersectObject(this.board)[0];
     if (!hit) return;
     const square = squareAt({ x: hit.point.x, z: hit.point.z });
     if (square !== null) this.pickHandler(square);

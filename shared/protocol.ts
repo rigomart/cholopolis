@@ -1,3 +1,4 @@
+import { type DiceDrag, parseDiceDrag, parseDiceToss } from "./dice.ts";
 import type { Action, PublicState, TradeSide } from "./game.ts";
 import { PIECES } from "./pieces.ts";
 
@@ -5,13 +6,12 @@ export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "leave" }
   | { type: "action"; action: Action }
-  /** The current player is shaking the dice before a roll; relayed to everyone, never stored. */
-  | { type: "shake"; on: boolean };
+  | { type: "diceDrag"; rollId: number; drag: DiceDrag | null };
 
 export type ServerMessage =
   | { type: "state"; state: PublicState; you: string | null; spectators: string[] }
   | { type: "error"; message: string }
-  | { type: "shake"; playerId: string; on: boolean };
+  | { type: "diceDrag"; playerId: string; rollId: number; drag: DiceDrag | null };
 
 export const ROOM_PATTERN = /^[a-z0-9]{6,12}$/;
 export const MAX_MESSAGE_BYTES = 4096;
@@ -32,7 +32,6 @@ function parseAction(v: unknown): Action | null {
   if (!isObject(v)) return null;
   switch (v.type) {
     case "start":
-    case "roll":
     case "buy":
     case "decline":
     case "endTurn":
@@ -40,6 +39,16 @@ function parseAction(v: unknown): Action | null {
     case "useJailCard":
     case "bankrupt":
       return { type: v.type };
+    case "roll": {
+      if (v.rollId !== undefined && !isCount(v.rollId)) return null;
+      const toss = v.toss === undefined ? undefined : parseDiceToss(v.toss);
+      if (toss === null) return null;
+      return {
+        type: "roll",
+        ...(toss ? { toss } : {}),
+        ...(v.rollId === undefined ? {} : { rollId: v.rollId as number }),
+      };
+    }
     case "choosePiece":
       return Number.isInteger(v.piece) && (v.piece as number) >= 0 && (v.piece as number) < PIECES.length
         ? { type: "choosePiece", piece: v.piece as number }
@@ -75,7 +84,11 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isObject(v)) return null;
   if (v.type === "join" && typeof v.name === "string") return { type: "join", name: v.name };
   if (v.type === "leave") return { type: "leave" };
-  if (v.type === "shake" && typeof v.on === "boolean") return { type: "shake", on: v.on };
+  if (v.type === "diceDrag" && isCount(v.rollId)) {
+    const drag = v.drag === null ? null : parseDiceDrag(v.drag);
+    if (v.drag !== null && !drag) return null;
+    return { type: "diceDrag", rollId: v.rollId, drag };
+  }
   if (v.type === "action") {
     const action = parseAction(v.action);
     return action ? { type: "action", action } : null;

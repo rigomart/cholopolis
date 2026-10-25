@@ -44,21 +44,19 @@ function knock(delay: number, volume: number, pitch: number): void {
 }
 
 /** Dice rattling in a cupped hand until the returned function is called. */
-export function startRattle(): () => void {
+export function startRattle(intensity: () => number): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const tick = () => {
-    knock(0, 0.25 + Math.random() * 0.2, 2200 + Math.random() * 1600);
-    timer = setTimeout(tick, 45 + Math.random() * 70);
+    const strength = Math.max(0, Math.min(1, intensity()));
+    if (strength > 0.05) knock(0, strength * (0.2 + Math.random() * 0.25), 2200 + Math.random() * 1600);
+    timer = setTimeout(tick, 140 - strength * 95);
   };
   tick();
   return () => clearTimeout(timer);
 }
 
-/** The dice hitting the board and bouncing, timed to the throw animation (seconds from now). */
-export function playLanding(bounces: number[]): void {
-  bounces.forEach((at, i) => {
-    const volume = 0.9 / (i + 1);
-    knock(at, volume, 900 + Math.random() * 300);
-    knock(at + 0.012, volume * 0.7, 1300 + Math.random() * 400);
-  });
+export function playLanding(strength: number): void {
+  const volume = Math.max(0, Math.min(1, strength)) * 0.8;
+  knock(0, volume, 900 + Math.random() * 300);
+  knock(0.012, volume * 0.7, 1300 + Math.random() * 400);
 }

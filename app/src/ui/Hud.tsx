@@ -25,14 +25,14 @@ interface Props {
   onNewRoom: () => void;
   onHome: () => void;
   onResetCamera?: () => void;
-  /** Who is shaking the dice right now, if anyone. */
   shaking: string | null;
-  onShake: (on: boolean) => void;
+  onRoll: () => void;
+  rolling: boolean;
 }
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
 
-export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shaking, onShake }: Props) {
+export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shaking, onRoll, rolling }: Props) {
   const { state, you, spectators, send } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
@@ -72,7 +72,7 @@ export function Hud({ table, onInspect, onNewRoom, onHome, onResetCamera, shakin
 
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
-        <ActionBar state={state} me={me} act={act} shaking={shaking} onShake={onShake} />
+        <ActionBar state={state} me={me} act={act} shaking={shaking} onRoll={onRoll} rolling={rolling} />
         <div class="toolbar">
           {canTrade && (
             <>
@@ -184,10 +184,11 @@ interface ActionBarProps {
   me: Player | undefined;
   act: (a: Action) => void;
   shaking: string | null;
-  onShake: (on: boolean) => void;
+  onRoll: () => void;
+  rolling: boolean;
 }
 
-function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
+function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps) {
   if (state.phase !== "playing" || !state.turn) return null;
   const current = findPlayer(state, state.turn.playerId);
   const owing = debtors(state);
@@ -236,10 +237,11 @@ function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
     case "roll":
       return (
         <div class="actions">
+          <p class="dice-instructions">Agarra los dados y suéltalos con un impulso.</p>
           {me.inJail ? (
             <>
               <p>Estás en el Penal (intento {me.jailTurns + 1} de 3).</p>
-              <RollButton label="Tirar por dobles" onShake={onShake} onRoll={() => act({ type: "roll" })} />
+              <RollButton label="Tirar por dobles" onRoll={onRoll} disabled={rolling} />
               <button type="button" disabled={me.cash < JAIL_FINE} onClick={() => act({ type: "payJailFine" })}>
                 Pagar fianza {money(JAIL_FINE)}
               </button>
@@ -252,8 +254,8 @@ function ActionBar({ state, me, act, shaking, onShake }: ActionBarProps) {
           ) : (
             <RollButton
               label={state.turn.doubles > 0 ? "¡Dobles! Tira otra vez" : "Tirar dados"}
-              onShake={onShake}
-              onRoll={() => act({ type: "roll" })}
+              onRoll={onRoll}
+              disabled={rolling}
             />
           )}
         </div>
