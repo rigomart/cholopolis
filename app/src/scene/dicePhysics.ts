@@ -84,8 +84,14 @@ export const length = (a: V) => Math.sqrt(dot(a, a));
 
 /** Rotates v by unit quaternion q. */
 export function rotate(q: Q, v: V): V {
-  const t = scale(cross(q, v), 2);
-  return add(add(v, scale(t, q.w)), cross(q, t));
+  const tx = (q.y * v.z - q.z * v.y) * 2;
+  const ty = (q.z * v.x - q.x * v.z) * 2;
+  const tz = (q.x * v.y - q.y * v.x) * 2;
+  return {
+    x: v.x + tx * q.w + (q.y * tz - q.z * ty),
+    y: v.y + ty * q.w + (q.z * tx - q.x * tz),
+    z: v.z + tz * q.w + (q.x * ty - q.y * tx),
+  };
 }
 
 const unrotate = (q: Q, v: V) => rotate({ x: -q.x, y: -q.y, z: -q.z, w: q.w }, v);
@@ -233,6 +239,27 @@ export class DiceWorld {
     return sub(v, add(B.v, cross(B.w, c.rb)));
   }
 
+  /** The relative velocity at a contact along `axis`; `velocityAt` without allocating, for the solver loop. */
+  private speedAlong(c: Contact, axis: V): number {
+    const { v, w } = this.bodies[c.a]!;
+    const { ra } = c;
+    let x = v.x + (w.y * ra.z - w.z * ra.y);
+    let y = v.y + (w.z * ra.x - w.x * ra.z);
+    let z = v.z + (w.x * ra.y - w.y * ra.x);
+    if (c.b < 0) {
+      x -= c.planeVelocity.x;
+      y -= c.planeVelocity.y;
+      z -= c.planeVelocity.z;
+    } else {
+      const B = this.bodies[c.b]!;
+      const { rb } = c;
+      x -= B.v.x + (B.w.y * rb.z - B.w.z * rb.y);
+      y -= B.v.y + (B.w.z * rb.x - B.w.x * rb.z);
+      z -= B.v.z + (B.w.x * rb.y - B.w.y * rb.x);
+    }
+    return x * axis.x + y * axis.y + z * axis.z;
+  }
+
   private mass(c: Contact, axis: V): number {
     const ta = cross(c.ra, axis);
     let k = INV_MASS + INV_INERTIA * dot(ta, ta);
@@ -277,31 +304,45 @@ export class DiceWorld {
     return c;
   }
 
-  private apply(c: Contact, impulse: V): void {
+  /** Pushes the contact's bodies apart by `amount` along `axis`, in place. */
+  private apply(c: Contact, axis: V, amount: number): void {
+    const x = axis.x * amount;
+    const y = axis.y * amount;
+    const z = axis.z * amount;
     const A = this.bodies[c.a]!;
-    A.v = add(A.v, scale(impulse, INV_MASS));
-    A.w = add(A.w, scale(cross(c.ra, impulse), INV_INERTIA));
+    const { ra } = c;
+    A.v.x += x * INV_MASS;
+    A.v.y += y * INV_MASS;
+    A.v.z += z * INV_MASS;
+    A.w.x += (ra.y * z - ra.z * y) * INV_INERTIA;
+    A.w.y += (ra.z * x - ra.x * z) * INV_INERTIA;
+    A.w.z += (ra.x * y - ra.y * x) * INV_INERTIA;
     if (c.b < 0) return;
     const B = this.bodies[c.b]!;
-    B.v = sub(B.v, scale(impulse, INV_MASS));
-    B.w = sub(B.w, scale(cross(c.rb, impulse), INV_INERTIA));
+    const { rb } = c;
+    B.v.x -= x * INV_MASS;
+    B.v.y -= y * INV_MASS;
+    B.v.z -= z * INV_MASS;
+    B.w.x -= (rb.y * z - rb.z * y) * INV_INERTIA;
+    B.w.y -= (rb.z * x - rb.x * z) * INV_INERTIA;
+    B.w.z -= (rb.x * y - rb.y * x) * INV_INERTIA;
   }
 
   private solve(c: Contact): void {
-    const vn = dot(this.velocityAt(c), c.normal);
+    const vn = this.speedAlong(c, c.normal);
     const lambda = Math.max(0, c.lambda + (c.target - vn) * c.normalMass);
     const dn = lambda - c.lambda;
     c.lambda = lambda;
-    if (dn !== 0) this.apply(c, scale(c.normal, dn));
+    if (dn !== 0) this.apply(c, c.normal, dn);
 
     const limit = c.friction * c.lambda;
-    for (const i of [0, 1] as const) {
-      const t = c.tangents[i];
-      const vt = dot(this.velocityAt(c), t);
-      const next = Math.max(-limit, Math.min(limit, c.lambdaT[i] - vt * c.tangentMass[i]));
-      const dt = next - c.lambdaT[i];
+    for (let i = 0; i < 2; i++) {
+      const t = c.tangents[i]!;
+      const vt = this.speedAlong(c, t);
+      const next = Math.max(-limit, Math.min(limit, c.lambdaT[i]! - vt * c.tangentMass[i]!));
+      const dt = next - c.lambdaT[i]!;
       c.lambdaT[i] = next;
-      if (dt !== 0) this.apply(c, scale(t, dt));
+      if (dt !== 0) this.apply(c, t, dt);
     }
   }
 }

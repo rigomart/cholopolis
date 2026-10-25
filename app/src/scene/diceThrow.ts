@@ -10,6 +10,14 @@ export const FRAME_TIME = STEP * FRAME_STEPS;
 const MAX_STEPS = Math.round(8 / STEP);
 const QUIET_STEPS = Math.round(0.25 / STEP);
 const ATTEMPTS = 12;
+/**
+ * Steps all attempts may spend between them; past it the best attempt so far stands. Counted in
+ * steps, not time, so every client stops at the same attempt.
+ */
+const STEP_BUDGET = Math.round(10 / STEP);
+/** Landing on the logo is only worth this many retries; a cocked or stacked die always is. */
+const LOGO_ATTEMPTS = 2;
+const COCKED = 10;
 
 export interface DiceThrow {
   /** Per frame, 14 numbers: position (x, y, z) and rotation (x, y, z, w) of each die. */
@@ -35,10 +43,12 @@ export const BOARD_PLANES: Plane[] = [
  */
 export function simulateToss(toss: DiceToss): DiceThrow {
   let best: { flight: DiceThrow; score: number } | null = null;
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+  let spent = 0;
+  for (let attempt = 0; attempt < ATTEMPTS && spent < STEP_BUDGET; attempt++) {
     const flight = run(nudge(toss, attempt));
+    spent += (flight.frameCount - 1) * FRAME_STEPS;
     const score = judge(flight);
-    if (score === 0) return flight;
+    if (score === 0 || (score < COCKED && attempt >= LOGO_ATTEMPTS)) return flight;
     if (!best || score < best.score) best = { flight, score };
   }
   return best!.flight;
@@ -128,7 +138,7 @@ function judge(flight: DiceThrow): number {
   for (let n = 0; n < 2; n++) {
     const pose = framePose(flight, flight.frameCount - 1, n);
     const facing = rotate(pose.rotation, flight.up[n]!).y;
-    if (facing < 0.995 || pose.position.y > DICE_FLOOR + DIE / 2 + 0.02) score += 10;
+    if (facing < 0.995 || pose.position.y > DICE_FLOOR + DIE / 2 + 0.02) score += COCKED;
     if (onLogo(pose.position)) score += 1;
   }
   return score;
