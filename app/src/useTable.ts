@@ -12,7 +12,7 @@ export interface Table {
   you: string | null;
   spectators: string[];
   error: { id: number; message: string } | null;
-  diceDrag: (Extract<ServerMessage, { type: "diceDrag" }> & { id: number }) | null;
+  diceHold: (Extract<ServerMessage, { type: "diceHold" }> & { id: number }) | null;
   send: (msg: ClientMessage) => void;
 }
 
@@ -25,7 +25,7 @@ export function useTable(room: string, name: string): Table {
   const [you, setYou] = useState<string | null>(null);
   const [spectators, setSpectators] = useState<string[]>([]);
   const [error, setError] = useState<Table["error"]>(null);
-  const [diceDrag, setDiceDrag] = useState<Table["diceDrag"]>(null);
+  const [diceHold, setDiceHold] = useState<Table["diceHold"]>(null);
   const socket = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -51,8 +51,8 @@ export function useTable(room: string, name: string): Table {
           setState(msg.state);
           setYou(msg.you);
           setSpectators(msg.spectators);
-        } else if (msg.type === "diceDrag") {
-          setDiceDrag({ ...msg, id: Date.now() });
+        } else if (msg.type === "diceHold") {
+          setDiceHold({ ...msg, id: Date.now() });
         } else {
           setError({ id: Date.now(), message: msg.message });
         }
@@ -81,5 +81,5 @@ export function useTable(room: string, name: string): Table {
     else setError({ id: Date.now(), message: "Sin conexión. Reconectando…" });
   }, []);
 
-  return { status, state, you, spectators, error, diceDrag, send };
+  return { status, state, you, spectators, error, diceHold, send };
 }

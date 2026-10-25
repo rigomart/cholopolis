@@ -2,23 +2,24 @@ import * as THREE from "three";
 import type { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import {
-  DICE_DRAG_EXPIRE_MS,
-  DICE_DRAG_INTERVAL_MS,
   DICE_FLOOR,
+  DICE_HOLD_EXPIRE_MS,
+  DICE_HOLD_INTERVAL_MS,
   DICE_HOLD_MAX_MS,
   DICE_SPEED_LIMIT,
-  type DiceDrag,
+  type DiceHold,
   type DicePose,
   type DiceToss,
+  parseDiceToss,
 } from "../../../shared/dice.ts";
 import type { PublicState } from "../../../shared/game.ts";
 import { playKnock, startRattle } from "../audio.ts";
 import { buildDie, DIE } from "./dice.ts";
-import { DiceHand, HAND_HEIGHT } from "./diceHand.ts";
+import { DiceHand, HAND_HEIGHT, RELEASE_SECONDS } from "./diceHand.ts";
 import { automaticToss, type DiceThrow, FRAME_TIME, faceTurn, framePose, simulateToss } from "./diceThrow.ts";
 
 export interface DiceInput {
-  onDrag: (drag: DiceDrag | null) => void;
+  onHold: (hold: DiceHold | null) => void;
   onRoll: (toss: DiceToss) => void;
 }
 
@@ -30,14 +31,38 @@ interface Die {
   halo: THREE.Mesh;
 }
 
+/** Where a die is, how fast it moves, and how it looks: `rotation` is the model's, pips included. */
+interface Waypoint {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  rotation: THREE.Quaternion;
+}
+
+/** A curve from wherever the dice are into a toss, arriving at its start with its speed. */
+interface Lead {
+  from: Waypoint[];
+  to: Waypoint[];
+  start: number;
+  ms: number;
+}
+
 interface Flight {
   sim: DiceThrow;
+  rollId: number;
+  /** When the replay's first frame plays; the lead runs until then. */
+  start: number;
+  lead: Lead | null;
+  impactIndex: number;
+}
+
+/** Our own throw, sent and waiting for the server's values. Nothing is replayed before they arrive. */
+interface Release {
   toss: DiceToss;
   rollId: number;
-  start: number;
-  impactIndex: number;
-  /** Thrown here and still waiting for the server's values. */
-  pending: boolean;
+  /** Toward a spot just short of the toss, where the dice wait if the values are late. */
+  lead: Lead | null;
+  /** When the replay would start if the values were already here. */
+  due: number;
 }
 
 interface Hold {
@@ -51,6 +76,16 @@ interface Hold {
 
 /** Fling speed is read from the pointer over this much recent history. */
 const FLING_WINDOW_MS = 110;
+/** Time for the dice to turn to their new faces once the values arrive, before the replay starts. */
+const MIN_LEAD_MS = 100;
+/** The roll button scoops the dice up over this long. */
+const SCOOP_MS = 300;
+/** Viewers catch up from the last relayed hold over this long. */
+const CATCH_UP_MS = 160;
+/** A waiting throw stops this many seconds of travel short of its toss. */
+const WAIT_SHORT = 0.07;
+/** Dice picked up off the board rise at this speed before swinging into the toss. */
+const LIFT = new THREE.Vector3(0, 4, 0);
 const START_POSES: [DicePose, DicePose] = [
   { position: { x: -3.2, y: DICE_FLOOR + DIE / 2, z: 2.9 }, rotation: { x: 0, y: 0, z: 0, w: 1 } },
   { position: { x: -2.3, y: DICE_FLOOR + DIE / 2, z: 3.4 }, rotation: { x: 0, y: 0.38, z: 0, w: 0.925 } },
@@ -59,11 +94,40 @@ const START_POSES: [DicePose, DicePose] = [
 const smooth = (t: number) => t * t * (3 - 2 * t);
 const toVector = (p: { x: number; y: number; z: number }) => new THREE.Vector3(p.x, p.y, p.z);
 const toQuaternion = (q: { x: number; y: number; z: number; w: number }) => new THREE.Quaternion(q.x, q.y, q.z, q.w);
+const toPose = (p: THREE.Vector3, q: THREE.Quaternion): DicePose => ({
+  position: { x: p.x, y: p.y, z: p.z },
+  rotation: { x: q.x, y: q.y, z: q.z, w: q.w },
+});
+
+/** Cubic Hermite from each die's `from` to its `to`, matching both speeds; rotations ease between. */
+function leadAt(lead: Lead, now: number): Waypoint[] {
+  const s = Math.max(0, Math.min(1, (now - lead.start) / lead.ms));
+  const d = lead.ms / 1000;
+  const s2 = s * s;
+  const s3 = s2 * s;
+  return lead.from.map((a, n) => {
+    const b = lead.to[n]!;
+    const position = a.position
+      .clone()
+      .multiplyScalar(2 * s3 - 3 * s2 + 1)
+      .addScaledVector(a.velocity, (s3 - 2 * s2 + s) * d)
+      .addScaledVector(b.position, 3 * s2 - 2 * s3)
+      .addScaledVector(b.velocity, (s3 - s2) * d);
+    const velocity = a.position
+      .clone()
+      .sub(b.position)
+      .multiplyScalar((6 * s2 - 6 * s) / d)
+      .addScaledVector(a.velocity, 3 * s2 - 4 * s + 1)
+      .addScaledVector(b.velocity, 3 * s2 - 2 * s);
+    return { position, velocity, rotation: a.rotation.clone().slerp(b.rotation, smooth(s)) };
+  });
+}
 
 /**
  * The two dice: picked up and shaken by the player whose turn it is, mirrored live for everyone
  * else, then thrown with physics that every screen replays the same way. Values come only from
- * the server; each die model is turned inside its body so the rolled value lands on top.
+ * the server. Each die model is turned inside its body so the rolled value lands on top; that
+ * turn is folded into the short lead into the replay, so no face changes once the dice fly.
  */
 export class DiceRig {
   private readonly dice: Die[] = [];
@@ -73,8 +137,9 @@ export class DiceRig {
   private readonly reducedMotion: boolean;
   private rest: [DicePose, DicePose] = structuredClone(START_POSES);
   private flight: Flight | null = null;
+  private release: Release | null = null;
   private hold: Hold | null = null;
-  private remote: { drag: DiceDrag; updated: number } | null = null;
+  private remote: { hold: DiceHold; updated: number; rotations: DicePose["rotation"][] } | null = null;
   private blend: { from: DicePose[]; start: number; ms: number } | null = null;
   private input: DiceInput | null = null;
   private enabled = false;
@@ -113,6 +178,12 @@ export class DiceRig {
     return this.flight ? this.flight.start + this.flight.sim.duration * 1000 : 0;
   }
 
+  /** Whether roll `rollId` is on the board: landed, cut short by a later roll, or never animated. */
+  landed(rollId: number): boolean {
+    if (this.seenRoll < rollId) return false;
+    return !(this.flight && this.flight.rollId <= rollId && performance.now() < this.landsAt);
+  }
+
   setInput(input: DiceInput | null): void {
     if (!input) this.cancel();
     this.input = input;
@@ -128,41 +199,49 @@ export class DiceRig {
     if (!state) return this.cancel();
     const first = this.seenRoll === -1;
     if (state.dice && state.rollId !== this.seenRoll) {
-      const flight = this.flight;
-      const toss = state.toss ?? automaticToss(state.rollId);
-      let sim: DiceThrow;
-      if (flight?.pending && flight.rollId === state.rollId && JSON.stringify(flight.toss) === JSON.stringify(toss)) {
-        // Our own throw, already in the air: only the values were missing.
-        sim = flight.sim;
-        flight.pending = false;
-        this.rest = this.finalPoses(sim);
-        if (this.reducedMotion) this.flight = null;
-      } else {
-        const fromHand = Boolean(this.hold || this.remote);
-        this.endHold();
-        sim = this.throw(toss, state.rollId, !first && !this.reducedMotion, false, fromHand ? 150 : 320);
-      }
+      // A toss saved or sent by another version may not parse; the automatic throw stands in.
+      const toss = parseDiceToss(state.diceToss) ?? automaticToss(state.rollId);
+      const sim = simulateToss(toss);
+      const now = performance.now();
+      const release = this.release;
+      const ours =
+        release?.rollId === state.rollId && JSON.stringify(release.toss) === JSON.stringify(toss) ? release : null;
+      const fromHand = Boolean(this.hold || this.remote || release);
+      const from = this.here(now);
+      this.endHold();
+      this.release = null;
+      this.blend = null;
+      this.rest = [framePose(sim, sim.frameCount - 1, 0), framePose(sim, sim.frameCount - 1, 1)];
       this.dice.forEach((die, n) => die.model.quaternion.copy(faceTurn(state.dice![n]!, sim.up[n]!)));
+      this.flight = null;
+      if (!first && !this.reducedMotion) {
+        const ms = ours ? Math.max(MIN_LEAD_MS, ours.due - now) : fromHand ? CATCH_UP_MS : this.pickupMs(from, toss);
+        if (!fromHand) for (const w of from) if (w.velocity.lengthSq() < 0.01) w.velocity.copy(LIFT);
+        const lead = { from, to: this.tossWaypoints(toss), start: now, ms };
+        this.flight = { sim, rollId: state.rollId, start: now + ms, lead, impactIndex: 0 };
+      }
     }
     this.seenRoll = state.rollId;
   }
 
   /** Someone else holding the dice, or letting go without throwing. */
-  showDrag(drag: DiceDrag | null): void {
-    if (this.hold || this.flight) return;
-    if (!drag) return this.cancel();
-    this.remote = { drag: structuredClone(drag), updated: performance.now() };
-    this.stopRattle ??= startRattle(() => this.remote?.drag.shake ?? 0);
+  showHold(hold: DiceHold | null): void {
+    if (this.hold || this.flight || this.release) return;
+    if (!hold) return this.cancel();
+    const rotations = this.remote?.rotations ?? this.dice.map((die) => this.poseOf(die).rotation);
+    this.remote = { hold: structuredClone(hold), updated: performance.now(), rotations };
+    this.stopRattle ??= startRattle(() => this.remote?.hold.shake ?? 0);
   }
 
-  /** Drops any hold, or a throw the server never confirmed, and puts the dice back. */
+  /** Drops any hold, or a throw the server never answered, and puts the dice back. */
   cancel(): void {
-    const notify = Boolean(this.hold || this.flight?.pending);
-    if (!this.hold && !this.remote && !this.flight?.pending) return;
+    const notify = Boolean(this.hold || this.release);
+    if (!this.hold && !this.remote && !this.release) return;
     this.endHold();
-    if (this.flight?.pending) this.flight = null;
-    this.blendFromHere(350);
-    if (notify) this.input?.onDrag(null);
+    this.release = null;
+    if (this.reducedMotion) this.blend = null;
+    else this.blendFromHere(350);
+    if (notify) this.input?.onHold(null);
   }
 
   private endHold(): void {
@@ -190,7 +269,7 @@ export class DiceRig {
       });
     }
     this.place(poses);
-    const idle = this.enabled && !this.hold && !this.flight;
+    const idle = this.enabled && !this.hold && !this.flight && !this.release;
     for (const die of this.dice) {
       die.halo.visible = idle;
       die.halo.position.set(die.body.position.x, DICE_FLOOR + 0.015, die.body.position.z);
@@ -202,7 +281,7 @@ export class DiceRig {
     if (hold) {
       if (now - hold.started > DICE_HOLD_MAX_MS) {
         this.cancel();
-        return this.rest.map((p) => structuredClone(p));
+        return this.restPoses();
       }
       hold.hand.update(dt, (strength, surface) => {
         // Dice in a shaken hand collide dozens of times a second; a few knocks read as a rattle.
@@ -211,24 +290,27 @@ export class DiceRig {
         playKnock(strength * 0.7, surface);
       });
       const poses = hold.hand.poses();
-      if (now - hold.relayed >= DICE_DRAG_INTERVAL_MS) {
+      if (now - hold.relayed >= DICE_HOLD_INTERVAL_MS) {
         hold.relayed = now;
-        this.input?.onDrag({ dice: poses, shake: hold.hand.shake });
+        this.input?.onHold({ dice: poses, shake: hold.hand.shake });
       }
       return poses;
     }
 
     const remote = this.remote;
     if (remote) {
-      if (now - remote.updated > DICE_DRAG_EXPIRE_MS) {
+      if (now - remote.updated > DICE_HOLD_EXPIRE_MS) {
         this.cancel();
-        return this.rest.map((p) => structuredClone(p));
+        return this.restPoses();
       }
-      remote.drag.shake *= Math.exp(-dt * 4);
-      // Drag updates arrive a few times a second; ease toward each one.
+      remote.hold.shake *= Math.exp(-dt * 4);
+      // Without motion the dice just follow the thrower's hand, unturned.
+      if (this.reducedMotion)
+        return remote.hold.dice.map((pose, n) => ({ position: pose.position, rotation: remote.rotations[n]! }));
+      // Hold updates arrive a few times a second; ease toward each one.
       const k = 1 - Math.exp(-dt * 14);
       return this.dice.map((die, n) => {
-        const target = remote.drag.dice[n]!;
+        const target = remote.hold.dice[n]!;
         return {
           position: die.body.position.clone().lerp(toVector(target.position), k),
           rotation: die.body.quaternion.clone().slerp(toQuaternion(target.rotation), k),
@@ -236,9 +318,12 @@ export class DiceRig {
       });
     }
 
+    const release = this.release;
+    if (release) return release.lead ? this.bodyPoses(leadAt(release.lead, now)) : this.dice.map((d) => this.poseOf(d));
+
     const flight = this.flight;
-    if (!flight) return this.rest.map((p) => structuredClone(p));
-    if (this.reducedMotion && flight.pending) return this.dice.map((die) => this.poseOf(die));
+    if (!flight) return this.restPoses();
+    if (now < flight.start) return flight.lead ? this.bodyPoses(leadAt(flight.lead, now)) : this.restPoses();
     const seconds = (now - flight.start) / 1000;
     const frame = seconds / FRAME_TIME;
     const index = Math.floor(frame);
@@ -246,9 +331,9 @@ export class DiceRig {
       const hit = flight.sim.impacts[flight.impactIndex++]!;
       if (seconds - hit.at < 0.1) playKnock(hit.strength, hit.surface);
     }
-    if (seconds >= flight.sim.duration && !flight.pending) {
+    if (seconds >= flight.sim.duration) {
       this.flight = null;
-      return this.rest.map((p) => structuredClone(p));
+      return this.restPoses();
     }
     return [0, 1].map((n) => {
       const a = framePose(flight.sim, index, n);
@@ -260,36 +345,88 @@ export class DiceRig {
     });
   }
 
-  /** The roll button: an automatic throw played here at once, like a fling. False if the dice can't be thrown now. */
+  /** The roll button: scoops the dice up and throws them, like a fling. False if the dice can't be thrown now. */
   throwFromButton(): boolean {
-    if (!this.enabled || !this.input || this.flight || this.hold) return false;
+    if (!this.enabled || !this.input || this.flight || this.hold || this.release) return false;
     const rollId = this.seenRoll + 1;
     const toss = automaticToss(rollId, this.rest);
-    this.throw(toss, rollId, !this.reducedMotion, true, 260);
+    const from = this.here(performance.now());
+    for (const w of from) w.velocity.copy(LIFT);
+    this.startRelease(toss, rollId, from, SCOOP_MS);
     this.input.onRoll(toss);
     return true;
   }
 
   /**
-   * Starts playing a toss. Remote viewers catch up from the last relayed hold, and automatic
-   * throws lift off the board, over `blendMs`; a fling continues straight from the hand.
+   * The first moments of our own throw, played while the server rolls: the dice head for the
+   * toss and ease to a stop just short of it. Once the values pick the faces, `sync` leads them
+   * from wherever they got to into the replay.
    */
-  private throw(toss: DiceToss, rollId: number, animate: boolean, pending: boolean, blendMs = 0): DiceThrow {
-    const sim = simulateToss(toss);
-    if (!pending) this.rest = this.finalPoses(sim);
+  private startRelease(toss: DiceToss, rollId: number, from: Waypoint[], ms: number): void {
+    const now = performance.now();
     this.blend = null;
-    if (animate && blendMs > 0) this.blendFromHere(blendMs);
-    this.flight = animate || pending ? { sim, toss, rollId, start: performance.now(), impactIndex: 0, pending } : null;
-    return sim;
+    const to = this.tossWaypoints(toss).map((w) => ({
+      position: w.position.clone().addScaledVector(w.velocity, -WAIT_SHORT),
+      velocity: new THREE.Vector3(),
+      rotation: w.rotation,
+    }));
+    this.release = { toss, rollId, lead: this.reducedMotion ? null : { from, to, start: now, ms }, due: now + ms };
   }
 
-  private finalPoses(sim: DiceThrow): [DicePose, DicePose] {
-    return [framePose(sim, sim.frameCount - 1, 0), framePose(sim, sim.frameCount - 1, 1)];
+  /** Where each die is now, how fast it is going, and how it looks. */
+  private here(now: number): Waypoint[] {
+    const flight = this.flight;
+    const lead = this.release?.lead ?? (flight && now < flight.start ? flight.lead : null);
+    if (lead) return leadAt(lead, now);
+    return this.dice.map((die, n) => {
+      const velocity = new THREE.Vector3();
+      if (flight) {
+        // Cut short mid-flight: carry on at the replay's speed.
+        const index = Math.floor((now - flight.start) / 1000 / FRAME_TIME);
+        const a = framePose(flight.sim, index, n).position;
+        const b = framePose(flight.sim, index + 1, n).position;
+        velocity.subVectors(toVector(b), toVector(a)).divideScalar(FRAME_TIME);
+      }
+      return {
+        position: die.body.position.clone(),
+        velocity,
+        rotation: die.body.quaternion.clone().multiply(die.model.quaternion),
+      };
+    });
+  }
+
+  private tossWaypoints(toss: DiceToss): Waypoint[] {
+    return toss.dice.map((d, n) => ({
+      position: toVector(d.position),
+      velocity: toVector(d.velocity),
+      rotation: toQuaternion(d.rotation).multiply(this.dice[n]!.model.quaternion),
+    }));
+  }
+
+  /** Longer the farther the dice travel to where the toss starts. */
+  private pickupMs(from: Waypoint[], toss: DiceToss): number {
+    const distance = Math.max(
+      ...from.map((w, n) => {
+        const start = toss.dice[n]!.position;
+        return Math.hypot(w.position.x - start.x, w.position.z - start.z);
+      }),
+    );
+    return Math.min(650, 340 + distance * 45);
+  }
+
+  /** Body poses that make the dice look like `points`. */
+  private bodyPoses(points: Waypoint[]): DicePose[] {
+    return points.map((w, n) =>
+      toPose(w.position, w.rotation.clone().multiply(this.dice[n]!.model.quaternion.clone().invert())),
+    );
+  }
+
+  private restPoses(): DicePose[] {
+    return this.rest.map((p) => structuredClone(p));
   }
 
   private poseOf(die: Die): DicePose {
-    const { position: p, quaternion: q } = die.body;
-    return { position: { x: p.x, y: p.y, z: p.z }, rotation: { x: q.x, y: q.y, z: q.z, w: q.w } };
+    return toPose(die.body.position, die.body.quaternion);
   }
 
   private blendFromHere(ms: number): void {
@@ -337,7 +474,8 @@ export class DiceRig {
   }
 
   private canGrab(e: PointerEvent): boolean {
-    return this.enabled && Boolean(this.input) && !this.flight && !this.hold && this.overDice(e);
+    const busy = this.flight || this.hold || this.release;
+    return this.enabled && Boolean(this.input) && !busy && this.overDice(e);
   }
 
   /** Returns true when the pointer picked up the dice, so the camera should ignore it. */
@@ -349,8 +487,9 @@ export class DiceRig {
     const now = performance.now();
     this.remote = null;
     this.blend = null;
+    const from = this.dice.map((die) => this.poseOf(die)) as [DicePose, DicePose];
     this.hold = {
-      hand: new DiceHand(this.dice.map((die) => this.poseOf(die)) as [DicePose, DicePose], point),
+      hand: new DiceHand(from, point, this.reducedMotion),
       pointerId: e.pointerId,
       samples: [{ ...point, at: now }],
       started: now,
@@ -360,7 +499,7 @@ export class DiceRig {
     this.controls.enabled = false;
     this.canvas.setPointerCapture(e.pointerId);
     this.canvas.style.cursor = "grabbing";
-    this.input?.onDrag({ dice: this.hold.hand.poses(), shake: 0 });
+    this.input?.onHold({ dice: this.hold.hand.poses(), shake: 0 });
     return true;
   }
 
@@ -388,8 +527,11 @@ export class DiceRig {
     if (!hold || e.pointerId !== hold.pointerId) return Boolean(hold);
     this.pointerMove(e);
     const toss = hold.hand.release(this.flingVelocity(hold.samples, e.timeStamp), this.forward());
+    const speeds = hold.hand.velocities();
+    const from = this.here(performance.now());
+    from.forEach((w, n) => w.velocity.copy(toVector(speeds[n]!)));
     this.endHold();
-    this.throw(toss, this.seenRoll + 1, true, true);
+    this.startRelease(toss, this.seenRoll + 1, from, RELEASE_SECONDS * 1000);
     this.input?.onRoll(toss);
     return true;
   }

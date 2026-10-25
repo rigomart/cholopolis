@@ -4,7 +4,7 @@ import * as THREE from "three";
 
 import { DICE_FLOOR, DICE_WALL, type DiceToss, parseDiceToss } from "../../../shared/dice.ts";
 import { DIE, FACE_NORMALS } from "./dice.ts";
-import { DiceHand } from "./diceHand.ts";
+import { DiceHand, RELEASE_SECONDS } from "./diceHand.ts";
 import { automaticToss, faceTurn, framePose, simulateToss } from "./diceThrow.ts";
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -33,17 +33,27 @@ const extremes: DiceToss[] = [
 const tosses = [...extremes, ...Array.from({ length: 16 }, (_, n) => automaticToss(n))];
 const throws = tosses.map((toss) => simulateToss(toss));
 
+/** How far apart two dice are across the board. */
+const spacing = (dice: { position: { x: number; z: number } }[]) =>
+  Math.hypot(dice[0]!.position.x - dice[1]!.position.x, dice[0]!.position.z - dice[1]!.position.z);
+
 function released(speed: number) {
   const hand = new DiceHand(REST, { x: -0.5, z: 2.5 });
   for (let i = 0; i < 40; i++) hand.update(1 / 60, () => {});
+  const held = hand.poses();
   const toss = hand.release({ x: 0, y: 0, z: -speed }, { x: 0, y: 0, z: -1 });
   const flight = simulateToss(toss);
-  const travel = [0, 1].map((n) => {
-    const from = toss.dice[n]!.position;
-    const to = framePose(flight, flight.frameCount - 1, n).position;
-    return Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
-  });
-  return { flight, travel: (travel[0]! + travel[1]!) / 2 };
+  /** The farthest the dice get from where the hand let go; a hard throw may bounce back off the rim. */
+  let travel = 0;
+  for (let frame = 0; frame < flight.frameCount; frame++) {
+    const [a, b] = [0, 1].map((n) => {
+      const from = held[n]!.position;
+      const to = framePose(flight, frame, n).position;
+      return Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
+    });
+    travel = Math.max(travel, (a! + b!) / 2);
+  }
+  return { held, toss, flight, travel };
 }
 
 describe("dice throws", () => {
@@ -112,6 +122,31 @@ describe("dice throws", () => {
     expect(still).toBeGreaterThan(0.25);
     expect(gentle).toBeLessThan(medium!);
     expect(medium).toBeLessThan(hard!);
+  });
+
+  test("the toss starts where the dice have carried on to a moment after letting go", () => {
+    const { held, toss } = released(8);
+    for (const [n, die] of toss.dice.entries()) {
+      const from = held[n]!.position;
+      expect(die.position.z - from.z).toBeCloseTo(-8 * RELEASE_SECONDS, 2);
+      expect(die.position.y).toBeGreaterThan(from.y);
+    }
+    expect(spacing(toss.dice)).toBeCloseTo(spacing(held), 3);
+  });
+
+  test("a still hand (reduced motion) carries the dice straight under the pointer, unturned", () => {
+    const hand = new DiceHand(REST, { x: 0, z: 2 }, true);
+    const knocks: string[] = [];
+    for (const [i, x] of [-1, 1, -1.5, 2].entries()) {
+      hand.moveTo({ x, z: 2 + i * 0.1 });
+      hand.update(1 / 60, (_, surface) => knocks.push(surface));
+      const [a, b] = hand.poses();
+      expect((a.position.x + b.position.x) / 2).toBeCloseTo(x, 5);
+      expect(a.rotation).toEqual(REST[0].rotation);
+      expect(b.rotation).toEqual(REST[1].rotation);
+    }
+    expect(knocks).toEqual([]);
+    expect(hand.shake).toBe(0);
   });
 
   test("shaking the hand rattles the dice against it and each other", () => {

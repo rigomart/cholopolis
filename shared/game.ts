@@ -117,7 +117,11 @@ export interface GameState {
   turn: Turn | null;
   dice: [number, number] | null;
   rollId: number;
-  toss: DiceToss | null;
+  /**
+   * How the dice left the hand. Not called `toss`, the older shape's name, so tabs still
+   * running that client ignore it and fall back to their own automatic throw.
+   */
+  diceToss: DiceToss | null;
   card: DrawnCard | null;
   moves: Move[];
   trades: Trade[];
@@ -135,7 +139,7 @@ export type PublicState = Omit<GameState, "decks">;
 export type Action =
   | { type: "start" }
   | { type: "choosePiece"; piece: number }
-  | { type: "roll"; toss?: DiceToss; rollId?: number }
+  | { type: "roll"; diceToss?: DiceToss; rollId?: number }
   | { type: "buy" }
   | { type: "decline" }
   | { type: "endTurn" }
@@ -167,7 +171,7 @@ export function createGame(): GameState {
     turn: null,
     dice: null,
     rollId: 0,
-    toss: null,
+    diceToss: null,
     card: null,
     moves: [],
     trades: [],
@@ -177,6 +181,12 @@ export function createGame(): GameState {
     nextId: 1,
     decks: { suerte: [], caja: [] },
   };
+}
+
+/** A game as saved by any version: dice data this one can't replay is dropped. */
+export function restoreGame(saved: GameState): GameState {
+  const { toss: _legacy, ...g } = saved as GameState & { toss?: unknown };
+  return { ...g, diceToss: parseDiceToss(g.diceToss) };
 }
 
 export function toPublic(g: GameState): PublicState {
@@ -439,7 +449,7 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
   switch (action.type) {
     case "roll":
       if (action.rollId !== undefined && action.rollId !== g.rollId) fail("Ya tiraste esos dados.");
-      return roll(g, p, rng, action.toss);
+      return roll(g, p, rng, action.diceToss);
     case "buy":
       return buy(g, p);
     case "decline": {
@@ -539,14 +549,13 @@ function requireTurn(g: GameState, p: Player, stage: Stage): Turn {
 
 function roll(g: GameState, p: Player, rng: Rng, toss?: DiceToss): void {
   const t = requireTurn(g, p, "roll");
-  const cosmetic = toss === undefined ? null : parseDiceToss(toss);
-  if (toss !== undefined && !cosmetic) fail("Lanzamiento inválido.");
   const d1 = 1 + Math.floor(rng() * 6);
   const d2 = 1 + Math.floor(rng() * 6);
   const total = d1 + d2;
   const doubles = d1 === d2;
   g.dice = [d1, d2];
-  g.toss = cosmetic;
+  // Cosmetic only: one that doesn't parse is dropped rather than refusing the roll.
+  g.diceToss = parseDiceToss(toss);
   g.rollId++;
   log(g, `${p.name} sacó ${d1} y ${d2}${doubles ? " (¡dobles!)" : ""}.`);
   t.rolledDoubles = false;

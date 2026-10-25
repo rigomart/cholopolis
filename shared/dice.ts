@@ -1,5 +1,5 @@
 /**
- * Cosmetic dice data sent by the thrower: the live hold (`DiceDrag`) and the release state of
+ * Cosmetic dice data sent by the thrower: the live hold (`DiceHold`) and the release state of
  * both dice (`DiceToss`). Values never come from here; the server rolls them. Parsing clamps
  * everything to the dice arena and snaps numbers to a 1e-4 grid, and parsing twice gives the
  * same result, so the thrower can replay exactly what the server stores.
@@ -24,7 +24,7 @@ export interface DieRelease extends DicePose {
   spin: DiceVector;
 }
 
-export interface DiceDrag {
+export interface DiceHold {
   dice: [DicePose, DicePose];
   /** How hard the dice are rattling in the hand, 0 to 1. */
   shake: number;
@@ -39,10 +39,12 @@ export const DICE_FLOOR = 0.35;
 /** Walls stand this far from the centre on x and z: the edge of the inner square. */
 export const DICE_WALL = 4.5;
 export const DICE_CEILING = DICE_FLOOR + 4;
+/** Dice released closer than this, centre to centre, are moved apart. */
+export const DICE_GAP = 0.7;
 export const DICE_SPEED_LIMIT = 20;
 export const DICE_SPIN_LIMIT = 40;
-export const DICE_DRAG_INTERVAL_MS = 80;
-export const DICE_DRAG_EXPIRE_MS = 1500;
+export const DICE_HOLD_INTERVAL_MS = 80;
+export const DICE_HOLD_EXPIRE_MS = 1500;
 export const DICE_HOLD_MAX_MS = 15_000;
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -65,10 +67,11 @@ function vector(v: unknown, limit: number): DiceVector | null {
   return { x: snap(x * scale), y: snap(y * scale), z: snap(z * scale) };
 }
 
+const EDGE = DICE_WALL - 0.3;
+
 function position(v: unknown): DiceVector | null {
   if (!object(v) || !finite(v.x) || !finite(v.y) || !finite(v.z)) return null;
-  const edge = DICE_WALL - 0.3;
-  return { x: within(v.x, -edge, edge), y: within(v.y, DICE_FLOOR + 0.3, DICE_CEILING), z: within(v.z, -edge, edge) };
+  return { x: within(v.x, -EDGE, EDGE), y: within(v.y, DICE_FLOOR + 0.3, DICE_CEILING), z: within(v.z, -EDGE, EDGE) };
 }
 
 function rotation(v: unknown): DiceQuaternion | null {
@@ -103,14 +106,37 @@ function pair<T>(v: unknown, parse: (v: unknown) => T | null): [T, T] | null {
   return a && b ? [a, b] : null;
 }
 
-export function parseDiceDrag(v: unknown): DiceDrag | null {
+export function parseDiceHold(v: unknown): DiceHold | null {
   if (!object(v) || !finite(v.shake)) return null;
   const dice = pair(v.dice, pose);
   return dice ? { dice, shake: within(v.shake, 0, 1) } : null;
 }
 
+/**
+ * Overlapping dice would spend the whole replay fighting free, on every screen, so they are
+ * spread sideways about their midpoint, kept inside the arena.
+ */
+function apart([a, b]: [DieRelease, DieRelease]): [DieRelease, DieRelease] {
+  const dx = b.position.x - a.position.x;
+  const dz = b.position.z - a.position.z;
+  const dy = b.position.y - a.position.y;
+  // The tolerance keeps a second pass from moving dice the first one already spread.
+  if (dx * dx + dy * dy + dz * dz >= (DICE_GAP - 0.01) ** 2) return [a, b];
+  const flat = Math.sqrt(dx * dx + dz * dz);
+  const ux = flat > 1e-3 ? dx / flat : 1;
+  const uz = flat > 1e-3 ? dz / flat : 0;
+  const hx = (ux * DICE_GAP) / 2;
+  const hz = (uz * DICE_GAP) / 2;
+  const mx = within((a.position.x + b.position.x) / 2, -EDGE + Math.abs(hx), EDGE - Math.abs(hx));
+  const mz = within((a.position.z + b.position.z) / 2, -EDGE + Math.abs(hz), EDGE - Math.abs(hz));
+  return [
+    { ...a, position: { ...a.position, x: snap(mx - hx), z: snap(mz - hz) } },
+    { ...b, position: { ...b.position, x: snap(mx + hx), z: snap(mz + hz) } },
+  ];
+}
+
 export function parseDiceToss(v: unknown): DiceToss | null {
   if (!object(v)) return null;
   const dice = pair(v.dice, release);
-  return dice ? { dice } : null;
+  return dice ? { dice: apart(dice) } : null;
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
-import { DICE_DRAG_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
+import { DICE_HOLD_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
 import { canDragDice } from "../../shared/game.ts";
 import { BoardScene } from "./scene/BoardScene.ts";
 import { createRoom, findOpenRoom, goToRoom, roomFromPath, saveName } from "./session.ts";
@@ -9,6 +9,9 @@ import { Hud } from "./ui/Hud.tsx";
 import { Lobby } from "./ui/Lobby.tsx";
 import { NameGate } from "./ui/NameGate.tsx";
 import { useTable } from "./useTable.ts";
+
+/** How long a throw may wait for the server before the dice go back. */
+const ROLL_TIMEOUT_MS = 4000;
 
 interface Seat {
   room: string;
@@ -89,13 +92,13 @@ interface TableProps {
 
 function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const table = useTable(seat.room, seat.name);
-  const { state, status, error, diceDrag, you, send } = table;
+  const { state, status, error, diceHold, you, send } = table;
   const [inspect, setInspect] = useState<number | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const [shaking, setShaking] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
   const rollId = state?.rollId;
-  const diceLandAt = useCallback(() => scene?.diceLandAt ?? 0, [scene]);
+  const diceLanded = useCallback((id: number) => scene?.diceLanded(id) ?? true, [scene]);
   const turnKey = `${state?.turn?.playerId}:${state?.turn?.stage}`;
 
   useEffect(() => {
@@ -117,7 +120,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
         return;
       }
       setRolling(true);
-      send({ type: "action", action: { type: "roll", rollId: state.rollId, ...(toss ? { toss } : {}) } });
+      send({ type: "action", action: { type: "roll", rollId: state.rollId, ...(toss ? { diceToss: toss } : {}) } });
     },
     [scene, send, state, status, you],
   );
@@ -125,9 +128,9 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   useEffect(() => {
     scene?.onDiceInput({
       onRoll: roll,
-      onDrag: (drag) => {
-        setShaking(drag ? you : null);
-        if (status === "open" && state) send({ type: "diceDrag", rollId: state.rollId, drag });
+      onHold: (hold) => {
+        setShaking(hold ? you : null);
+        if (status === "open" && state) send({ type: "diceHold", rollId: state.rollId, hold });
       },
     });
   }, [scene, send, roll, state, status, you]);
@@ -140,18 +143,18 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
 
   useEffect(() => {
     if (
-      !diceDrag ||
-      diceDrag.playerId === you ||
+      !diceHold ||
+      diceHold.playerId === you ||
       !state ||
       status !== "open" ||
-      !canDragDice(state, diceDrag.playerId, diceDrag.rollId)
+      !canDragDice(state, diceHold.playerId, diceHold.rollId)
     )
       return;
-    setShaking(diceDrag.drag ? diceDrag.playerId : null);
-    scene?.showDiceDrag(diceDrag.drag);
-    const id = setTimeout(() => setShaking(null), DICE_DRAG_EXPIRE_MS);
+    setShaking(diceHold.hold ? diceHold.playerId : null);
+    scene?.showDiceHold(diceHold.hold);
+    const id = setTimeout(() => setShaking(null), DICE_HOLD_EXPIRE_MS);
     return () => clearTimeout(id);
-  }, [scene, diceDrag, you, state, status]);
+  }, [scene, diceHold, you, state, status]);
 
   useEffect(() => {
     setShaking(null);
@@ -160,11 +163,13 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
 
   useEffect(() => {
     if (!rolling) return;
+    // The dice wait in the air for the server's values; never forever.
     const id = setTimeout(() => {
       scene?.cancelDice();
       setRolling(false);
       setShaking(null);
-    }, 5000);
+      setToast({ id: Date.now(), message: "La mesa no respondió. Vuelve a tirar." });
+    }, ROLL_TIMEOUT_MS);
     return () => clearTimeout(id);
   }, [scene, rolling]);
 
@@ -173,11 +178,14 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
     scene?.cancelDice();
     setShaking(null);
     setRolling(false);
-    if (!error) return;
-    setToast(error.message);
+    if (error) setToast(error);
+  }, [error, status, scene]);
+
+  useEffect(() => {
+    if (!toast) return;
     const id = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(id);
-  }, [error, status, scene]);
+  }, [toast]);
 
   const leave = () => {
     send({ type: "leave" });
@@ -198,14 +206,14 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           shaking={shaking}
           onRoll={() => scene?.throwDice() || roll()}
           rolling={rolling || status !== "open" || shaking === you}
-          diceLandAt={diceLandAt}
+          diceLanded={diceLanded}
         />
       )}
       {state && inspect !== null && <Deed state={state} index={inspect} onClose={() => setInspect(null)} />}
       {status === "reconnecting" && <p class="banner">Se cortó la conexión. Reconectando…</p>}
       {toast && (
         <p class="toast" role="alert">
-          {toast}
+          {toast.message}
         </p>
       )}
     </>

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-import type { DiceDrag } from "../../../shared/dice.ts";
+import type { DiceHold } from "../../../shared/dice.ts";
 import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { drawBoard, FONT, INK } from "./boardTexture.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
@@ -255,8 +255,8 @@ export class BoardScene {
     this.dice.setEnabled(enabled);
   }
 
-  showDiceDrag(drag: DiceDrag | null): void {
-    this.dice.showDrag(drag);
+  showDiceHold(hold: DiceHold | null): void {
+    this.dice.showHold(hold);
   }
 
   cancelDice(): void {
@@ -267,8 +267,8 @@ export class BoardScene {
     return this.dice.throwFromButton();
   }
 
-  get diceLandAt(): number {
-    return this.dice.landsAt;
+  diceLanded(rollId: number): boolean {
+    return this.dice.landed(rollId);
   }
 
   // ---------------------------------------------------------------- pieces

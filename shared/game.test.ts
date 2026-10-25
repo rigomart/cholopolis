@@ -15,6 +15,7 @@ import {
   GameError,
   type Player,
   rentFor,
+  restoreGame,
   syncPresence,
 } from "./game.ts";
 import { parseClientMessage } from "./protocol.ts";
@@ -104,19 +105,19 @@ describe("turns", () => {
       velocity: { x: 0, y: 0, z: 999 },
       spin: { x: 999, y: 0, z: 0 },
     };
-    const toss = { dice: [wild, wild] } as DiceToss;
+    const toss = { dice: [wild, { ...wild, position: { x: -999, y: 999, z: 999 } }] } as DiceToss;
     for (const jailed of [false, true]) {
       const plain = playing();
       const thrown = playing();
       p(plain, "a").inJail = p(thrown, "a").inJail = jailed;
       run(plain, "a", { type: "roll" }, dice(2, 2));
-      run(thrown, "a", { type: "roll", toss }, dice(2, 2));
+      run(thrown, "a", { type: "roll", diceToss: toss }, dice(2, 2));
       expect(thrown.dice).toEqual([2, 2]);
       expect(thrown.players).toEqual(plain.players);
       expect(thrown.turn).toEqual(plain.turn);
-      expect(thrown.toss?.dice[0].position).toEqual({ x: 4.2, y: 0.65, z: -4.2 });
-      expect(thrown.toss?.dice[0].rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
-      expect(thrown.toss?.dice[0].velocity).toEqual({ x: 0, y: 0, z: 20 });
+      expect(thrown.diceToss?.dice[0].position).toEqual({ x: 4.2, y: 0.65, z: -4.2 });
+      expect(thrown.diceToss?.dice[0].rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
+      expect(thrown.diceToss?.dice[0].velocity).toEqual({ x: 0, y: 0, z: 20 });
       expect(thrown.rollId).toBe(1);
     }
   });
@@ -129,12 +130,50 @@ describe("turns", () => {
       velocity: { x: 1, y: 1, z: 1 },
       spin: { x: 1, y: 1, z: 1 },
     };
-    run(g, "a", { type: "roll", toss: { dice: [die, die] }, rollId: 0 }, dice(1, 1));
-    expect(g.toss?.dice[1]).toEqual(die);
+    const other = { ...die, position: { x: 1, y: 1, z: 0 } };
+    run(g, "a", { type: "roll", diceToss: { dice: [die, other] }, rollId: 0 }, dice(1, 1));
+    expect(g.diceToss?.dice[1]).toEqual(other);
     if (g.turn?.stage === "buy") run(g, "a", { type: "decline" });
     expect(() => run(g, "a", { type: "roll", rollId: 0 })).toThrow("tiraste");
     autoPlay(g, dice(1, 2));
-    expect(g.toss).toBeNull();
+    expect(g.diceToss).toBeNull();
+  });
+
+  test("a toss that doesn't parse is dropped and the roll still happens", () => {
+    for (const diceToss of [{ point: { x: 1, z: 1 } }, { dice: [] }, "junk"]) {
+      const g = playing();
+      run(g, "a", { type: "roll", diceToss: diceToss as unknown as DiceToss }, dice(3, 4));
+      expect(g.dice).toEqual([3, 4]);
+      expect(g.rollId).toBe(1);
+      expect(g.diceToss).toBeNull();
+    }
+  });
+
+  test("a game saved by an older version loads without its toss and plays on", () => {
+    const die = {
+      position: { x: 0, y: 1, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      velocity: { x: 1, y: 1, z: 1 },
+      spin: { x: 1, y: 1, z: 1 },
+    };
+    const { diceToss: _, ...current } = playing();
+    const legacy = {
+      point: { x: -2.8, z: 3.15 },
+      rotation: { x: 0, y: 0, z: 0 },
+      velocity: { x: 2, z: -4 },
+      spin: { x: 5, y: 1, z: -4 },
+    };
+    const old = { ...current, rollId: 7, dice: [3, 4], toss: legacy } as unknown as GameState;
+    const g = restoreGame(structuredClone(old));
+    expect("toss" in g).toBe(false);
+    expect(g.diceToss).toBeNull();
+    expect(g.dice).toEqual([3, 4]);
+    run(g, "a", { type: "roll", rollId: 7 }, dice(1, 2));
+    expect(g.rollId).toBe(8);
+
+    const other = { ...die, position: { x: 1, y: 1, z: 0 } };
+    expect(restoreGame({ ...g, diceToss: { dice: [die, "bad"] } } as unknown as GameState).diceToss).toBeNull();
+    expect(restoreGame({ ...g, diceToss: { dice: [die, other] } }).diceToss).toEqual({ dice: [die, other] });
   });
 
   test("rolling moves the piece and offers an unowned street", () => {

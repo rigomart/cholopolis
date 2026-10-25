@@ -13,6 +13,7 @@ import {
   GameError,
   type GameState,
   removePlayer,
+  restoreGame,
   syncPresence,
   toPublic,
 } from "../shared/game.ts";
@@ -57,7 +58,8 @@ export class Table extends DurableObject<Env> {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     void ctx.blockConcurrencyWhile(async () => {
-      this.game = (await ctx.storage.get<GameState>("game")) ?? createGame();
+      const saved = await ctx.storage.get<GameState>("game");
+      this.game = saved ? restoreGame(saved) : createGame();
       this.tokens = (await ctx.storage.get<Record<string, string>>("tokens")) ?? {};
       this.room = (await ctx.storage.get<string>("room")) ?? "";
       this.waitingOn = (await ctx.storage.get<string>("waitingOn")) ?? "";
@@ -89,7 +91,8 @@ export class Table extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== "string" || raw.length > MAX_MESSAGE_BYTES) return;
     const msg = parseClientMessage(raw);
-    if (msg?.type === "diceDrag") {
+    if (msg?.type === "outdated") return;
+    if (msg?.type === "diceHold") {
       if (!this.drags.allows(ws)) return;
     } else if (!this.actions.allows(ws)) {
       return this.send(ws, { type: "error", message: "Más despacio, por favor." });
@@ -112,7 +115,7 @@ export class Table extends DurableObject<Env> {
           // Seat the socket first so the new player counts as present in this same commit.
           this.setAttachment(att);
           const id = att.playerId;
-          return this.commit((g) => {
+          return await this.commit((g) => {
             if (id && g.phase === "lobby" && !findPlayer(g, id)) addPlayer(g, id, name);
           });
         }
@@ -123,16 +126,16 @@ export class Table extends DurableObject<Env> {
           this.setAttachment(att);
           delete this.tokens[att.token];
           await this.ctx.storage.put("tokens", this.tokens);
-          return this.commit((g) => removePlayer(g, id));
+          return await this.commit((g) => removePlayer(g, id));
         }
-        case "diceDrag": {
+        case "diceHold": {
           if (!canDragDice(this.game, att.playerId, msg.rollId)) return;
           for (const other of this.sockets(ws)) {
             this.send(other, {
-              type: "diceDrag",
+              type: "diceHold",
               playerId: att.playerId as string,
               rollId: msg.rollId,
-              drag: msg.drag,
+              hold: msg.hold,
             });
           }
           return;
@@ -140,7 +143,7 @@ export class Table extends DurableObject<Env> {
         case "action": {
           const id = att.playerId;
           if (!id) return this.send(ws, { type: "error", message: "Estás mirando esta partida." });
-          return this.commit((g) => act(g, id, msg.action, rng));
+          return await this.commit((g) => act(g, id, msg.action, rng));
         }
       }
     } catch (error) {

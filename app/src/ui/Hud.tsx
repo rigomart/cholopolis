@@ -28,8 +28,8 @@ interface Props {
   shaking: string | null;
   onRoll: () => void;
   rolling: boolean;
-  /** When the dice in play come to rest, in `performance.now()` time. */
-  diceLandAt: () => number;
+  /** Whether the dice thrown for roll `rollId` are on the board yet. */
+  diceLanded: (rollId: number) => boolean;
 }
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
@@ -43,7 +43,7 @@ export function Hud({
   shaking,
   onRoll,
   rolling,
-  diceLandAt,
+  diceLanded,
 }: Props) {
   const { state, you, spectators, send } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -124,7 +124,13 @@ export function Hud({
         )}
       </div>
 
-      <CardToast card={state.card} state={state} diceLandAt={diceLandAt} />
+      <CardToast
+        card={state.card}
+        state={state}
+        diceLanded={diceLanded}
+        yours={state.turn?.playerId === you && state.turn.stage === "roll"}
+        held={shaking !== null && shaking === you}
+      />
 
       {sheet?.kind === "props" && me && (
         <Properties state={state} me={me} act={act} onInspect={onInspect} onClose={() => setSheet(null)} />
@@ -318,44 +324,68 @@ function Log({ entries }: { entries: LogEntry[] }) {
   );
 }
 
-/** Shows each newly drawn card for a few seconds, once the dice that led to it have landed. */
+/** A card stays up this long, or this much less once another is ready behind it. */
+const CARD_MS = 5000;
+const CARD_QUEUED_MS = 2500;
+
+/**
+ * Shows each newly drawn card for a few seconds, in order, each once the roll that drew it is on
+ * the board: landed, cut short by a later roll, or never animated (reduced motion, reconnect).
+ */
 function CardToast({
   card,
   state,
-  diceLandAt,
+  diceLanded,
+  yours,
+  held,
 }: {
   card: DrawnCard | null;
   state: PublicState;
-  diceLandAt: () => number;
+  diceLanded: (rollId: number) => boolean;
+  /** Your roll is next: the card lets clicks through to the dice under it. */
+  yours: boolean;
+  /** You picked the dice up, so you're done reading. */
+  held: boolean;
 }) {
   const [seenId, setSeenId] = useState(card?.id ?? 0);
-  const [waiting, setWaiting] = useState<DrawnCard | null>(null);
-  const [shown, setShown] = useState<DrawnCard | null>(null);
+  const [queue, setQueue] = useState<{ card: DrawnCard; rollId: number }[]>([]);
+  const [shown, setShown] = useState<{ card: DrawnCard; at: number } | null>(null);
   if (card && card.id !== seenId) {
     setSeenId(card.id);
-    setWaiting(card);
+    setQueue([...queue, { card, rollId: state.rollId }]);
   }
+  const next = queue[0];
   useEffect(() => {
-    if (!waiting) return;
-    // Polled: the scene starts the throw after this effect runs.
+    if (!next) return;
+    // Polled: the scene starts the throw after this effect runs, and it lands seconds later.
     const id = setInterval(() => {
-      if (performance.now() < diceLandAt()) return;
-      setShown(waiting);
-      setWaiting(null);
+      if (shown && performance.now() - shown.at < CARD_QUEUED_MS) return;
+      if (!diceLanded(next.rollId)) return;
+      setShown({ card: next.card, at: performance.now() });
+      setQueue((q) => q.slice(1));
     }, 100);
     return () => clearInterval(id);
-  }, [waiting, diceLandAt]);
+  }, [next, shown, diceLanded]);
   useEffect(() => {
     if (!shown) return;
-    const id = setTimeout(() => setShown(null), 5000);
+    const id = setTimeout(() => setShown(null), CARD_MS);
     return () => clearTimeout(id);
   }, [shown]);
+  useEffect(() => {
+    if (held) setShown(null);
+  }, [held]);
   if (!shown) return null;
-  const who = findPlayer(state, shown.playerId);
+  const { card: drawn } = shown;
+  const who = findPlayer(state, drawn.playerId);
   return (
-    <button type="button" class={`card-toast ${shown.deck}`} onClick={() => setShown(null)}>
-      <span class="card-deck">{shown.deck === "suerte" ? "Suerte" : "Caja Municipal"}</span>
-      <span class="card-text">{shown.text}</span>
+    <button
+      key={drawn.id}
+      type="button"
+      class={`card-toast ${drawn.deck}${yours ? " passive" : ""}`}
+      onClick={() => setShown(null)}
+    >
+      <span class="card-deck">{drawn.deck === "suerte" ? "Suerte" : "Caja Municipal"}</span>
+      <span class="card-text">{drawn.text}</span>
       <span class="card-who">para {who?.name}</span>
     </button>
   );
