@@ -1,5 +1,5 @@
 /**
- * Dice sounds synthesized with Web Audio: no files to load. Browsers only allow audio after a
+ * Dice and turn-clock sounds synthesized with Web Audio: no files to load. Browsers only allow audio after a
  * user gesture, so `unlockAudio` runs on the first tap or key press.
  */
 const MUTE_KEY = "cholopolis:mute";
@@ -63,4 +63,28 @@ export function playKnock(strength: number, surface: keyof typeof PITCH): void {
   const pitch = PITCH[surface] * (0.85 + Math.random() * 0.3);
   knock(0, volume, pitch);
   if (surface !== "die") knock(0.012, volume * 0.6, pitch * 1.4);
+}
+
+function tone(delay: number, frequency: number, volume: number, length: number, type: OscillatorType): void {
+  if (!ctx || muted || ctx.state !== "running") return;
+  const t = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  osc.type = type;
+  osc.frequency.value = frequency;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(volume, t + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + length);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + length + 0.02);
+}
+
+export function playTick(): void {
+  tone(0, 1650, 0.12, 0.05, "sine");
+}
+
+export function playChime(): void {
+  tone(0, 784, 0.18, 0.35, "triangle");
+  tone(0.12, 1175, 0.16, 0.5, "triangle");
 }

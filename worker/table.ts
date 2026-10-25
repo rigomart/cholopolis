@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { MAX_PLAYERS } from "../shared/board.ts";
+import { TURN_MS, turnLimit } from "../shared/clock.ts";
 import {
   act,
   addPlayer,
@@ -26,10 +27,6 @@ interface Attachment {
   name: string | null;
 }
 
-/** Time to act when it's your move. */
-const TURN_MS = 60_000;
-/** Time before the table plays for someone who is disconnected. */
-const AWAY_MS = 10_000;
 /** An abandoned table forgets everything after this long. */
 const EXPIRE_MS = 24 * 60 * 60_000;
 const RATE_LIMIT = 20;
@@ -212,7 +209,7 @@ export class Table extends DurableObject<Env> {
     syncPresence(draft, present);
     this.game = draft;
 
-    this.updateDeadline(present);
+    this.updateDeadline();
     await this.ctx.storage.put({ game: this.game, waitingOn: this.waitingOn });
     await this.schedule(closing);
     this.broadcast(sockets);
@@ -224,7 +221,7 @@ export class Table extends DurableObject<Env> {
    * who owes money, or the awaited player leaving or coming back. Other actions never buy time,
    * so nobody can hold the table by sending no-op actions.
    */
-  private updateDeadline(present: Set<string>): void {
+  private updateDeadline(): void {
     const g = this.game;
     if (g.phase !== "playing" || !g.turn) {
       g.deadline = null;
@@ -232,12 +229,11 @@ export class Table extends DurableObject<Env> {
       return;
     }
     const owing = debtors(g).map((p) => p.id);
-    const waitingFor = owing.length > 0 ? owing : [g.turn.playerId];
-    const here = waitingFor.some((id) => present.has(id));
-    const key = `${g.turn.playerId}:${g.turn.stage}:${g.rollId}:${owing.join(",")}:${here}`;
+    const limit = turnLimit(g);
+    const key = `${g.turn.playerId}:${g.turn.stage}:${g.rollId}:${owing.join(",")}:${limit === TURN_MS}`;
     if (key === this.waitingOn && g.deadline !== null) return;
     this.waitingOn = key;
-    g.deadline = Date.now() + (here ? TURN_MS : AWAY_MS);
+    g.deadline = Date.now() + limit;
   }
 
   private async schedule(closing?: WebSocket): Promise<void> {
@@ -261,7 +257,7 @@ export class Table extends DurableObject<Env> {
     for (const ws of sockets) {
       const att = ws.deserializeAttachment() as Attachment;
       const you = findPlayer(state, att.playerId) ? att.playerId : null;
-      this.send(ws, { type: "state", state, you, spectators });
+      this.send(ws, { type: "state", state, you, spectators, now: Date.now() });
     }
   }
 

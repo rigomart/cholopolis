@@ -1,0 +1,203 @@
+.turn-clock,
+.turn-ring {
+  --clock: var(--green);
+}
+
+.turn-clock.soon,
+.turn-ring.soon {
+  --clock: var(--yellow);
+}
+
+.turn-clock.warn,
+.turn-ring.warn {
+  --clock: var(--orange);
+}
+
+.turn-clock.urgent,
+.turn-ring.urgent {
+  --clock: var(--danger);
+}
+
+.turn-ring-svg {
+  flex: none;
+  rotate: -90deg;
+  overflow: visible;
+}
+
+.turn-ring-track,
+.turn-ring-fill {
+  fill: none;
+  stroke-width: 4;
+}
+
+.turn-ring-track {
+  stroke: var(--ink-3);
+}
+
+.turn-ring-fill {
+  stroke: var(--clock);
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset 0.25s linear,
+    stroke 0.3s;
+}
+
+.turn-clock {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.85rem 0.3rem 0.4rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink-3);
+  background: color-mix(in srgb, var(--ink-2) 94%, transparent);
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.3s;
+}
+
+.turn-clock .turn-ring-svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.turn-clock-time {
+  font-weight: 700;
+  color: var(--clock);
+}
+
+.turn-clock.mine {
+  gap: 0.7rem;
+  padding: 0.4rem 1.2rem 0.4rem 0.45rem;
+  border: 2.5px solid var(--clock);
+  color: var(--text);
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.turn-clock.mine .turn-ring-svg {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.turn-clock.warn {
+  animation: turn-pulse 1.6s ease-in-out infinite;
+}
+
+.turn-clock.urgent {
+  animation: turn-pulse 0.5s ease-in-out infinite;
+}
+
+.turn-clock.mine.urgent {
+  animation:
+    turn-pulse 0.5s ease-in-out infinite,
+    turn-shake 1s ease-in-out infinite;
+}
+
+@keyframes turn-pulse {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--clock) 30%, transparent);
+  }
+}
+
+@keyframes turn-shake {
+  8% {
+    translate: -4px 0;
+  }
+  16% {
+    translate: 4px 0;
+  }
+  24% {
+    translate: -3px 0;
+  }
+  32% {
+    translate: 2px 0;
+  }
+  40%,
+  100% {
+    translate: 0 0;
+  }
+}
+
+.turn-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+.turn-ring > .turn-ring-svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2.3rem;
+  height: 2.3rem;
+  translate: -50% -50%;
+  pointer-events: none;
+}
+
+.turn-ring.warn > .turn-ring-svg {
+  animation: turn-ring-pulse 1.6s ease-in-out infinite;
+}
+
+.turn-ring.urgent > .turn-ring-svg {
+  animation: turn-ring-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes turn-ring-pulse {
+  50% {
+    scale: 1.12;
+  }
+}
+
+.turn-banner,
+.hud > .turn-banner {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  z-index: 4;
+  padding: 0.35em 0.7em;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: 8px 8px 0 var(--ink);
+  font-size: clamp(2.2rem, 8vw, 4rem);
+  font-weight: 800;
+  font-stretch: 75%;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  translate: -50% 0;
+  rotate: -2deg;
+  animation: turn-banner 1.5s cubic-bezier(0.2, 1.2, 0.4, 1) forwards;
+}
+
+@keyframes turn-banner {
+  from {
+    translate: -50% -60vh;
+  }
+  22%,
+  80% {
+    translate: -50% 0;
+    opacity: 1;
+  }
+  to {
+    translate: -50% -1.5rem;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-clock,
+  .turn-ring > .turn-ring-svg,
+  .turn-banner {
+    animation: none !important;
+  }
+
+  .turn-clock,
+  .turn-ring-fill {
+    transition: none !important;
+  }
+}

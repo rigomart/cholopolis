@@ -19,14 +19,15 @@ export function Pawn({ player, size = 18 }: { player: Pick<Player, "color" | "pi
   );
 }
 
-/** Re-renders every `ms` while `active`, for countdowns. */
-export function useNow(active: boolean, ms = 500): number {
-  const [now, setNow] = useState(() => Date.now());
+/** Re-renders every `ms` while `active`, for countdowns. Pass `clock` to read time from elsewhere. */
+export function useNow(active: boolean, ms = 500, clock: () => number = Date.now): number {
+  const [now, setNow] = useState(clock);
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(() => setNow(Date.now()), ms);
+    setNow(clock());
+    const id = setInterval(() => setNow(clock()), ms);
     return () => clearInterval(id);
-  }, [active, ms]);
+  }, [active, ms, clock]);
   return now;
 }
 
