@@ -115,7 +115,7 @@ describe("turns", () => {
       expect(thrown.dice).toEqual([2, 2]);
       expect(thrown.players).toEqual(plain.players);
       expect(thrown.turn).toEqual(plain.turn);
-      expect(thrown.diceToss?.dice[0].position).toEqual({ x: 4.2, y: 0.65, z: -4.2 });
+      expect(thrown.diceToss?.dice[0].position).toEqual({ x: 4.08, y: 0.65, z: -4.08 });
       expect(thrown.diceToss?.dice[0].rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
       expect(thrown.diceToss?.dice[0].velocity).toEqual({ x: 0, y: 0, z: 20 });
       expect(thrown.rollId).toBe(1);

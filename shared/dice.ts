@@ -36,8 +36,8 @@ export interface DiceToss {
 
 /** Top of the board, where dice rest. */
 export const DICE_FLOOR = 0.35;
-/** Walls stand this far from the centre on x and z: the edge of the inner square. */
-export const DICE_WALL = 4.5;
+/** Walls stand this far from the centre on x and z: the inside of the rim around the inner square. */
+export const DICE_WALL = 4.38;
 export const DICE_CEILING = DICE_FLOOR + 4;
 /** Dice released closer than this, centre to centre, are moved apart. */
 export const DICE_GAP = 0.7;

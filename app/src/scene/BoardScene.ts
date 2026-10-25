@@ -1,14 +1,15 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-import type { DiceHold } from "../../../shared/dice.ts";
+import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
 import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
-import { drawBoard, FONT, INK } from "./boardTexture.ts";
+import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import {
   BOARD_SIZE,
   buildingSpot,
   HALF,
+  INNER,
   isCorner,
   type Local,
   pieceSpot,
@@ -46,6 +47,32 @@ interface PieceView {
 }
 
 const vec = (p: Local, y = TOP) => new THREE.Vector3(p.x, y, p.z);
+
+/** The low rail the dice bounce off, between their walls and the squares, with a chicha post at each corner. */
+function buildRim(): THREE.Group {
+  const rim = new THREE.Group();
+  const width = INNER - DICE_WALL;
+  const height = 0.24;
+  const rail = new THREE.MeshStandardMaterial({ color: "#3b2a8a", roughness: 0.55 });
+  for (let side = 0; side < 4; side++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(2 * DICE_WALL, height, width), rail);
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 1.4, height + 0.06, width * 1.4),
+      new THREE.MeshStandardMaterial({ color: CHICHA[side], roughness: 0.45 }),
+    );
+    const along = toBoard({ x: 0, z: DICE_WALL + width / 2 }, side);
+    const corner = toBoard({ x: DICE_WALL + width / 2, z: DICE_WALL + width / 2 }, side);
+    bar.position.set(along.x, TOP + height / 2, along.z);
+    bar.rotation.y = (side * Math.PI) / 2;
+    post.position.set(corner.x, TOP + (height + 0.06) / 2, corner.z);
+    for (const m of [bar, post]) {
+      m.castShadow = true;
+      m.receiveShadow = true;
+    }
+    rim.add(bar, post);
+  }
+  return rim;
+}
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
 const pieceKey = (piece: number, color: number) => `${piece}:${color}`;
 
@@ -166,6 +193,7 @@ export class BoardScene {
     this.board.position.y = THICKNESS / 2;
     this.board.receiveShadow = true;
     this.scene.add(this.board);
+    this.scene.add(buildRim());
 
     this.ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.24, 0.035, 8, 40),

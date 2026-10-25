@@ -46,7 +46,7 @@ describe("dice messages", () => {
     const msg = roll({ dice: [wild, { ...wild, position: { x: -1e6, y: 99, z: 1e6 } }] });
     if (msg?.type !== "action" || msg.action.type !== "roll") throw new Error("expected a roll");
     const [a] = msg.action.diceToss!.dice;
-    expect(a.position).toEqual({ x: 4.2, y: 0.65, z: -4.2 });
+    expect(a.position).toEqual({ x: 4.08, y: 0.65, z: -4.08 });
     const half = Math.round(Math.SQRT1_2 * 1e4) / 1e4;
     expect(a.rotation).toEqual({ x: half, y: 0, z: 0, w: half });
     expect(length(a.velocity)).toBeCloseTo(DICE_SPEED_LIMIT, 3);
