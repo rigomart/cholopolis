@@ -17,6 +17,7 @@ import {
   unmortgageCost,
 } from "./board.ts";
 import { CARDS } from "./cards.ts";
+import { type DiceToss, parseDiceToss } from "./dice.ts";
 import { PIECES } from "./pieces.ts";
 
 export const PLAYER_COLORS = [
@@ -116,6 +117,7 @@ export interface GameState {
   turn: Turn | null;
   dice: [number, number] | null;
   rollId: number;
+  toss: DiceToss | null;
   card: DrawnCard | null;
   moves: Move[];
   trades: Trade[];
@@ -133,7 +135,7 @@ export type PublicState = Omit<GameState, "decks">;
 export type Action =
   | { type: "start" }
   | { type: "choosePiece"; piece: number }
-  | { type: "roll" }
+  | { type: "roll"; toss?: DiceToss; rollId?: number }
   | { type: "buy" }
   | { type: "decline" }
   | { type: "endTurn" }
@@ -165,6 +167,7 @@ export function createGame(): GameState {
     turn: null,
     dice: null,
     rollId: 0,
+    toss: null,
     card: null,
     moves: [],
     trades: [],
@@ -199,6 +202,18 @@ export function activePlayers(g: PublicState): Player[] {
 
 export function debtors(g: PublicState): Player[] {
   return activePlayers(g).filter((p) => p.cash < 0);
+}
+
+export function canDragDice(g: PublicState, playerId: string | null, rollId: number): boolean {
+  const p = findPlayer(g, playerId);
+  return (
+    g.phase === "playing" &&
+    g.turn?.stage === "roll" &&
+    g.turn.playerId === playerId &&
+    g.rollId === rollId &&
+    Boolean(p?.connected && !p.bankrupt) &&
+    debtors(g).length === 0
+  );
 }
 
 function prop(g: PublicState, index: number): Property {
@@ -423,7 +438,8 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
 
   switch (action.type) {
     case "roll":
-      return roll(g, p, rng);
+      if (action.rollId !== undefined && action.rollId !== g.rollId) fail("Ya tiraste esos dados.");
+      return roll(g, p, rng, action.toss);
     case "buy":
       return buy(g, p);
     case "decline": {
@@ -521,13 +537,16 @@ function requireTurn(g: GameState, p: Player, stage: Stage): Turn {
   return t;
 }
 
-function roll(g: GameState, p: Player, rng: Rng): void {
+function roll(g: GameState, p: Player, rng: Rng, toss?: DiceToss): void {
   const t = requireTurn(g, p, "roll");
+  const cosmetic = toss === undefined ? null : parseDiceToss(toss);
+  if (toss !== undefined && !cosmetic) fail("Lanzamiento inválido.");
   const d1 = 1 + Math.floor(rng() * 6);
   const d2 = 1 + Math.floor(rng() * 6);
   const total = d1 + d2;
   const doubles = d1 === d2;
   g.dice = [d1, d2];
+  g.toss = cosmetic;
   g.rollId++;
   log(g, `${p.name} sacó ${d1} y ${d2}${doubles ? " (¡dobles!)" : ""}.`);
   t.rolledDoubles = false;

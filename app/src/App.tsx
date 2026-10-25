@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
+import { DICE_DRAG_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
+import { canDragDice } from "../../shared/game.ts";
 import { BoardScene } from "./scene/BoardScene.ts";
 import { createRoom, findOpenRoom, goToRoom, roomFromPath, saveName } from "./session.ts";
 import { Deed } from "./ui/Deed.tsx";
@@ -87,10 +89,11 @@ interface TableProps {
 
 function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const table = useTable(seat.room, seat.name);
-  const { state, status, error, shake, you, send } = table;
+  const { state, status, error, diceDrag, you, send } = table;
   const [inspect, setInspect] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [shaking, setShaking] = useState<string | null>(null);
+  const [rolling, setRolling] = useState(false);
   const rollId = state?.rollId;
   const turnKey = `${state?.turn?.playerId}:${state?.turn?.stage}`;
 
@@ -106,33 +109,74 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
     };
   }, [scene]);
 
-  // Another player shaking the dice, relayed live by the table.
-  useEffect(() => {
-    if (!shake || shake.playerId === you) return;
-    setShaking(shake.on ? shake.playerId : null);
-    scene?.setShaking(shake.on);
-  }, [scene, shake, you]);
+  const roll = useCallback(
+    (toss?: DiceToss) => {
+      if (status !== "open" || !state || !canDragDice(state, you, state.rollId)) {
+        scene?.cancelDice();
+        return;
+      }
+      setRolling(true);
+      send({ type: "action", action: { type: "roll", rollId: state.rollId, ...(toss ? { toss } : {}) } });
+    },
+    [scene, send, state, status, you],
+  );
 
-  // The roll landing, or the turn moving on, ends any shake. The scene stops its own animation.
+  useEffect(() => {
+    scene?.onDiceInput({
+      onRoll: roll,
+      onDrag: (drag) => {
+        setShaking(drag ? you : null);
+        if (status === "open" && state) send({ type: "diceDrag", rollId: state.rollId, drag });
+      },
+    });
+  }, [scene, send, roll, state, status, you]);
+
+  useEffect(() => () => scene?.onDiceInput(null), [scene]);
+
+  useEffect(() => {
+    scene?.setDiceEnabled(Boolean(status === "open" && !rolling && state && canDragDice(state, you, state.rollId)));
+  }, [scene, state, status, you, rolling]);
+
+  useEffect(() => {
+    if (
+      !diceDrag ||
+      diceDrag.playerId === you ||
+      !state ||
+      status !== "open" ||
+      !canDragDice(state, diceDrag.playerId, diceDrag.rollId)
+    )
+      return;
+    setShaking(diceDrag.drag ? diceDrag.playerId : null);
+    scene?.showDiceDrag(diceDrag.drag);
+    const id = setTimeout(() => setShaking(null), DICE_DRAG_EXPIRE_MS);
+    return () => clearTimeout(id);
+  }, [scene, diceDrag, you, state, status]);
+
   useEffect(() => {
     setShaking(null);
+    setRolling(false);
   }, [rollId, turnKey]);
 
-  const onShake = (on: boolean) => {
-    setShaking(on ? you : null);
-    scene?.setShaking(on);
-    send({ type: "shake", on });
-  };
+  useEffect(() => {
+    if (!rolling) return;
+    const id = setTimeout(() => {
+      scene?.cancelDice();
+      setRolling(false);
+      setShaking(null);
+    }, 5000);
+    return () => clearTimeout(id);
+  }, [scene, rolling]);
 
   useEffect(() => {
-    if (!error) return;
-    // A refused roll must not leave the dice rattling in the air.
-    scene?.setShaking(false);
+    if (!error && status === "open") return;
+    scene?.cancelDice();
     setShaking(null);
+    setRolling(false);
+    if (!error) return;
     setToast(error.message);
     const id = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(id);
-  }, [error, scene]);
+  }, [error, status, scene]);
 
   const leave = () => {
     send({ type: "leave" });
@@ -150,7 +194,8 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           onNewRoom={onNewRoom}
           onHome={onHome}
           shaking={shaking}
-          onShake={onShake}
+          onRoll={() => roll()}
+          rolling={rolling || status !== "open" || shaking === you}
         />
       )}
       {state && inspect !== null && <Deed state={state} index={inspect} onClose={() => setInspect(null)} />}

@@ -8,6 +8,7 @@ import {
   addPlayer,
   autoPlay,
   buildError,
+  canDragDice,
   createGame,
   type GameState,
   GameError,
@@ -95,6 +96,43 @@ describe("lobby", () => {
 });
 
 describe("turns", () => {
+  test("cosmetic tosses cannot change RNG values, movement, or Penal doubles", () => {
+    const toss = {
+      point: { x: 999, z: -999 },
+      velocity: { x: 0, z: 999 },
+      spin: { x: 999, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+    };
+    for (const jailed of [false, true]) {
+      const plain = playing();
+      const thrown = playing();
+      p(plain, "a").inJail = p(thrown, "a").inJail = jailed;
+      run(plain, "a", { type: "roll" }, dice(2, 2));
+      run(thrown, "a", { type: "roll", toss }, dice(2, 2));
+      expect(thrown.dice).toEqual([2, 2]);
+      expect(thrown.players).toEqual(plain.players);
+      expect(thrown.turn).toEqual(plain.turn);
+      expect(thrown.toss?.point).toEqual({ x: 5, z: -5 });
+      expect(thrown.toss?.velocity).toEqual({ x: 0, z: 12 });
+      expect(thrown.rollId).toBe(1);
+    }
+  });
+
+  test("button and automatic rolls clear the previous toss; stale rolls are refused", () => {
+    const g = playing();
+    const toss = {
+      point: { x: 0, z: 0 },
+      velocity: { x: 1, z: 1 },
+      spin: { x: 1, y: 1, z: 1 },
+      rotation: { x: 0, y: 0, z: 0 },
+    };
+    run(g, "a", { type: "roll", toss, rollId: 0 }, dice(1, 1));
+    if (g.turn?.stage === "buy") run(g, "a", { type: "decline" });
+    expect(() => run(g, "a", { type: "roll", rollId: 0 })).toThrow("tiraste");
+    autoPlay(g, dice(1, 2));
+    expect(g.toss).toBeNull();
+  });
+
   test("rolling moves the piece and offers an unowned street", () => {
     const g = playing();
     run(g, "a", { type: "roll" }, dice(1, 2));
@@ -313,4 +351,22 @@ describe("protocol", () => {
     expect(parseClientMessage(JSON.stringify({ type: "action", action: { type: "hack" } }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana" }))).toEqual({ type: "join", name: "Ana" });
   });
+});
+
+test("only a connected current player at this roll can drag, including in the Penal", () => {
+  const g = playing();
+  expect(canDragDice(g, "a", 0)).toBe(true);
+  p(g, "a").inJail = true;
+  expect(canDragDice(g, "a", 0)).toBe(true);
+  expect(canDragDice(g, "b", 0)).toBe(false);
+  expect(canDragDice(g, null, 0)).toBe(false);
+  expect(canDragDice(g, "a", 1)).toBe(false);
+  p(g, "b").cash = -1;
+  expect(canDragDice(g, "a", 0)).toBe(false);
+  p(g, "b").cash = 0;
+  p(g, "a").connected = false;
+  expect(canDragDice(g, "a", 0)).toBe(false);
+  p(g, "a").connected = true;
+  if (g.turn) g.turn.stage = "done";
+  expect(canDragDice(g, "a", 0)).toBe(false);
 });
