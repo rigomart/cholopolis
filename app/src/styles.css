@@ -466,12 +466,6 @@ select {
   opacity: 0.6;
 }
 
-.clock {
-  color: var(--yellow);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
 .log {
   position: absolute;
   top: 1rem;

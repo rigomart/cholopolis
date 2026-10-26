@@ -1,4 +1,4 @@
-import { GROUP_COLORS, mortgageValue, square, unmortgageCost } from "../../../shared/board.ts";
+import { mortgageValue, square, unmortgageCost } from "../../../shared/board.ts";
 import {
   type Action,
   buildError,
@@ -11,6 +11,7 @@ import {
   sellError,
   unmortgageError,
 } from "../../../shared/game.ts";
+import { squareColor } from "./Pips.tsx";
 
 interface Props {
   state: PublicState;
@@ -49,10 +50,9 @@ export function Properties({ state, me, act, onInspect, onClose }: Props) {
           const sell = sellError(state, me.id, i);
           const mortgage = mortgageError(state, me.id, i);
           const unmortgage = unmortgageError(state, me.id, i);
-          const color = sq.kind === "street" ? GROUP_COLORS[sq.group] : "#cbbdf5";
           return (
             <li key={i} class={prop.mortgaged ? "mortgaged" : ""}>
-              <span class="swatch" style={{ background: color }} />
+              <span class="swatch" style={{ background: squareColor(sq) }} />
               <button type="button" class="prop-name" onClick={() => onInspect(i)}>
                 {sq.name}
                 <span class="muted small">

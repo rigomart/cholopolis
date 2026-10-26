@@ -1,3 +1,5 @@
+import "./hud.css";
+import type { RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { JAIL_FINE, square } from "../../../shared/board.ts";
@@ -14,10 +16,14 @@ import {
 } from "../../../shared/game.ts";
 import { isMuted, setMuted } from "../audio.ts";
 import type { Table } from "../useTable.ts";
-import { Pawn, useNow } from "./bits.tsx";
+import { Pawn } from "./bits.tsx";
+import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
+import { Confetti } from "./Confetti.tsx";
+import { Pips } from "./Pips.tsx";
 import { Properties } from "./Properties.tsx";
 import { RollButton } from "./RollButton.tsx";
 import { TradeComposer, TradeOffers } from "./Trades.tsx";
+import { TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./TurnClock.tsx";
 
 interface Props {
   table: Table;
@@ -45,10 +51,13 @@ export function Hud({
   rolling,
   diceLanded,
 }: Props) {
-  const { state, you, spectators, send } = table;
+  const { state, you, spectators, send, serverNow } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
-  if (!state) return null;
+  const playerList = useRef<HTMLOListElement>(null);
+  useTurnAttention(state, you);
+  const balances = useMoneyState(state, diceLanded);
+  if (!state || !balances.state) return null;
   const me = findPlayer(state, you);
   const act = (action: Action) => send({ type: "action", action });
   const playing = state.phase === "playing";
@@ -56,7 +65,15 @@ export function Hud({
 
   return (
     <div class="hud">
-      <Players state={state} you={you} onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null} />
+      <Players
+        state={state}
+        you={you}
+        onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null}
+        settled={balances.state}
+        list={playerList}
+        now={serverNow}
+      />
+      <MoneyFlows batches={balances.batches} list={playerList} />
       <Log entries={state.log} />
       {onResetCamera && !sheet && (
         <button
@@ -84,12 +101,13 @@ export function Hud({
 
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
+        <TurnClock state={state} you={you} now={serverNow} />
         <ActionBar state={state} me={me} act={act} shaking={shaking} onRoll={onRoll} rolling={rolling} />
         <div class="toolbar">
           {canTrade && (
             <>
               <button type="button" onClick={() => setSheet(sheet?.kind === "props" ? null : { kind: "props" })}>
-                Mis propiedades ({ownedBy(state, me.id).length})
+                Mis propiedades <CountBadge count={ownedBy(state, me.id).length} />
               </button>
               <button type="button" onClick={() => setSheet({ kind: "trade", partner: null })}>
                 Proponer trato
@@ -124,6 +142,7 @@ export function Hud({
         )}
       </div>
 
+      <TurnBanner state={state} you={you} />
       <CardToast
         card={state.card}
         state={state}
@@ -147,41 +166,50 @@ function Players({
   state,
   you,
   onTrade,
+  settled,
+  list,
+  now,
 }: {
   state: PublicState;
   you: string | null;
   onTrade: ((id: string) => void) | null;
+  settled: PublicState;
+  list: RefObject<HTMLOListElement | null>;
+  now: () => number;
 }) {
   const turnId = state.turn?.playerId;
-  const ticking = state.deadline !== null;
-  const now = useNow(ticking);
-  const seconds = state.deadline ? Math.max(0, Math.ceil((state.deadline - now) / 1000)) : null;
 
   return (
-    <ol class="players" aria-label="Jugadores">
+    <ol ref={list} class="players" aria-label="Jugadores">
       {state.players.map((p) => {
         const isTurn = p.id === turnId;
         const tradable = onTrade && p.id !== you && !p.bankrupt;
+        const cash = findPlayer(settled, p.id)?.cash ?? p.cash;
         const body = (
           <>
-            <Pawn player={p} />
+            <TurnRing state={state} playerId={p.id} now={now}>
+              <Pawn player={p} />
+            </TurnRing>
+            {p.inJail && <span class="jail-bars" />}
             <span class="player-name">
               {p.name}
               {p.id === you && <span class="muted"> (tú)</span>}
             </span>
-            <span class={p.cash < 0 ? "player-cash negative" : "player-cash"}>{money(p.cash)}</span>
+            <RollingCash id={p.id} cash={cash} />
+            <Pips state={state} playerId={p.id} />
             <span class="player-notes">
               {p.bankrupt && "en quiebra"}
               {p.inJail && "en el Penal"}
               {!p.connected && !p.bankrupt && " desconectado"}
-              {isTurn && seconds !== null && <span class="clock"> {seconds}s</span>}
             </span>
           </>
         );
         return (
           <li
             key={p.id}
-            class={[isTurn && "turn", p.bankrupt && "out", !p.connected && "away"].filter(Boolean).join(" ")}
+            class={[isTurn && "turn", p.bankrupt && "out", !p.connected && "away", cash < 0 && !p.bankrupt && "owing"]
+              .filter(Boolean)
+              .join(" ")}
           >
             {tradable ? (
               <button type="button" class="player" onClick={() => onTrade(p.id)} title={`Proponer trato a ${p.name}`}>
@@ -194,6 +222,20 @@ function Players({
         );
       })}
     </ol>
+  );
+}
+
+function CountBadge({ count }: { count: number }) {
+  const [seen, setSeen] = useState(count);
+  const [bumps, setBumps] = useState(0);
+  if (count !== seen) {
+    setSeen(count);
+    if (count > seen) setBumps(bumps + 1);
+  }
+  return (
+    <span key={bumps} class={bumps > 0 ? "count-badge bump" : "count-badge"}>
+      {count}
+    </span>
   );
 }
 
@@ -309,6 +351,7 @@ function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps)
 function Log({ entries }: { entries: LogEntry[] }) {
   const list = useRef<HTMLOListElement>(null);
   const last = entries.at(-1)?.id;
+  const [lastIdOnMount] = useState(last ?? 0);
   useEffect(() => {
     list.current?.scrollTo({ top: list.current.scrollHeight });
   }, [last]);
@@ -317,7 +360,9 @@ function Log({ entries }: { entries: LogEntry[] }) {
       <summary>Lo que pasó</summary>
       <ol ref={list} aria-live="polite">
         {entries.slice(-40).map((e) => (
-          <li key={e.id}>{e.text}</li>
+          <li key={e.id} class={e.id > lastIdOnMount ? "fresh" : undefined}>
+            {e.text}
+          </li>
         ))}
       </ol>
     </details>
@@ -405,6 +450,7 @@ function Ended({
   const winner = findPlayer(state, state.winnerId);
   return (
     <dialog open class="ended" aria-labelledby="ended-title">
+      <Confetti />
       <div class="panel">
         {winner && <Pawn player={winner} size={40} />}
         <h2 id="ended-title">

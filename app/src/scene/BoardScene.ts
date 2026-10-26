@@ -1,22 +1,14 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+import { SALIDA_BONUS } from "../../../shared/board.ts";
 import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
-import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
+import { money, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
-import {
-  BOARD_SIZE,
-  buildingSpot,
-  HALF,
-  INNER,
-  isCorner,
-  type Local,
-  pieceSpot,
-  sideOf,
-  squareAt,
-  toBoard,
-} from "./layout.ts";
+import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
+import { Estates } from "./estates.ts";
+import { BOARD_SIZE, INNER, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
 import { buildPiece } from "./pieces.ts";
 import { registerThumbnails } from "./thumbnails.ts";
 
@@ -32,6 +24,7 @@ interface Hop {
   to: THREE.Vector3;
   ms: number;
   height: number;
+  onLand?: () => void;
 }
 
 interface PieceView {
@@ -44,6 +37,7 @@ interface PieceView {
   heading: number;
   restHeading: number;
   restScale: number;
+  leaving: { start: number | null } | null;
 }
 
 const vec = (p: Local, y = TOP) => new THREE.Vector3(p.x, y, p.z);
@@ -73,7 +67,6 @@ function buildRim(): THREE.Group {
   }
   return rim;
 }
-const easeOut = (t: number) => 1 - (1 - t) ** 3;
 const pieceKey = (piece: number, color: number) => `${piece}:${color}`;
 
 /** Heading (rotation about y) that points a model's +x along a board direction. */
@@ -85,19 +78,14 @@ function travelHeading(square: number): number {
   return headingOf(dir.x, dir.z);
 }
 
-function crowdScale(count: number): number {
-  return count > 4 ? 0.7 : count > 2 ? 0.85 : 1;
+function skipsAhead(previous: PublicState, next: PublicState): boolean {
+  if (document.hidden || next.rollId > previous.rollId + 1) return true;
+  const last = previous.log.at(-1)?.id;
+  return last !== undefined && !next.log.some((e) => e.id === last);
 }
 
-function disposeTree(root: THREE.Object3D): void {
-  root.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
-    o.geometry.dispose();
-    for (const m of [o.material].flat()) {
-      (m as THREE.MeshStandardMaterial).map?.dispose();
-      m.dispose();
-    }
-  });
+function crowdScale(count: number): number {
+  return count > 4 ? 0.7 : count > 2 ? 0.85 : 1;
 }
 
 /**
@@ -115,14 +103,15 @@ export class BoardScene {
   private readonly ring: THREE.Mesh;
   private readonly dice: DiceRig;
   private readonly pieces = new Map<string, PieceView>();
-  private readonly buildings = new Map<number, { key: string; group: THREE.Group }>();
-  private readonly deeds = new Map<number, { key: string; group: THREE.Group }>();
+  private readonly effects = new Effects(this.scene);
+  private readonly estates = new Estates(this.scene, this.effects, TOP);
   private readonly observer: ResizeObserver;
   private readonly reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   private readonly container: HTMLElement;
   private thumbTarget: THREE.WebGLRenderTarget | null = null;
 
   private state: PublicState | null = null;
+  private snapNext = false;
   private seenMove = 0;
   private lastFrame = 0;
   private cameraTween: { from: THREE.Vector3; fromTarget: THREE.Vector3; start: number } | null = null;
@@ -248,21 +237,24 @@ export class BoardScene {
     this.renderer.setAnimationLoop(null);
     this.observer.disconnect();
     this.controls.dispose();
+    this.effects.dispose();
     this.thumbTarget?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
 
   update(state: PublicState | null): void {
-    const first = this.state === null;
+    const previous = this.state;
     const previousTurn = this.state?.turn;
     const previousRoll = this.state?.rollId;
     // The lobby slowly circles the board; when play starts, glide back to the standard view.
     if (state?.phase === "playing" && this.state?.phase === "lobby") this.resetCamera();
     this.state = state;
     this.controls.autoRotate = !this.reducedMotion && (!state || state.phase !== "playing");
-    this.dice.sync(state);
+    const snap = state !== null && (this.snapNext || !previous || skipsAhead(previous, state));
+    this.dice.sync(state, snap);
     if (!state) return this.syncPieces(null, true);
+    this.snapNext = false;
     if (
       state.turn?.playerId !== previousTurn?.playerId ||
       state.turn?.stage !== "roll" ||
@@ -271,8 +263,14 @@ export class BoardScene {
     ) {
       this.dice.cancel();
     }
-    this.syncPieces(state, first);
-    this.syncBuildings(state);
+    if (snap) this.effects.finish();
+    this.syncPieces(state, snap);
+    this.estates.sync(state, !snap && !this.reducedMotion);
+  }
+
+  /** Makes the next `update` show its state as it is, without animating. */
+  snapNextUpdate(): void {
+    this.snapNext = true;
   }
 
   onDiceInput(input: DiceInput | null): void {
@@ -303,14 +301,15 @@ export class BoardScene {
 
   private syncPieces(state: PublicState | null, snap: boolean): void {
     const players = state ? state.players.filter((p) => !p.bankrupt) : [];
-    const keep = new Set(players.map((p) => p.id));
     for (const [id, view] of this.pieces) {
       const p = players.find((x) => x.id === id);
-      if (keep.has(id) && p && view.key === pieceKey(p.piece, p.color)) continue;
+      if (p && view.key === pieceKey(p.piece, p.color) && !view.leaving) continue;
+      if (!p && !snap && state?.players.some((x) => x.id === id && x.bankrupt)) {
+        view.leaving ??= { start: null };
+        continue;
+      }
       // Gone, or picked a different token in the lobby: rebuild it.
-      this.scene.remove(view.mesh);
-      disposeTree(view.mesh);
-      this.pieces.delete(id);
+      this.removePiece(id, view);
     }
 
     const bySquare = new Map<number, string[]>();
@@ -339,6 +338,7 @@ export class BoardScene {
         continue;
       }
       const hopMs = this.reducedMotion ? 60 : 190;
+      const { mesh } = view;
       for (const move of newMoves.filter((m) => m.playerId === p.id)) {
         view.waitUntil = Math.max(view.waitUntil, walkAfter);
         if (move.steps === null) {
@@ -348,7 +348,10 @@ export class BoardScene {
         const dir = Math.sign(move.steps);
         for (let s = 1; s <= Math.abs(move.steps); s++) {
           const square = (((move.from + s * dir) % 40) + 40) % 40;
-          view.queue.push({ to: vec(pieceSpot(square, 0, 1)), ms: hopMs, height: 0.38 });
+          const hop: Hop = { to: vec(pieceSpot(square, 0, 1)), ms: hopMs, height: 0.38 };
+          // Walking forward onto or past Salida pays the salary, as `walk` in shared/game.ts does.
+          if (square === 0 && dir > 0) hop.onLand = () => this.collectSalary(mesh);
+          view.queue.push(hop);
         }
       }
       const last = view.queue.at(-1)?.to ?? view.hop?.to ?? view.mesh.position;
@@ -368,12 +371,37 @@ export class BoardScene {
       heading: 0,
       restHeading: 0,
       restScale: 1,
+      leaving: null,
     };
+  }
+
+  private removePiece(id: string, view: PieceView): void {
+    this.scene.remove(view.mesh);
+    disposeTree(view.mesh);
+    this.pieces.delete(id);
+  }
+
+  private collectSalary(piece: THREE.Object3D): void {
+    const now = performance.now();
+    if (!this.reducedMotion) this.effects.sparkle(vec(squareCenter(0), TOP + 0.02), now);
+    this.effects.floatText(`+${money(SALIDA_BONUS)}`, piece, now, this.reducedMotion);
+  }
+
+  private sinkPiece(id: string, view: PieceView, now: number): void {
+    const leaving = view.leaving;
+    if (!leaving || view.hop || view.queue.length > 0) return;
+    leaving.start ??= Math.max(now, view.waitUntil);
+    const ms = this.reducedMotion ? 250 : 900;
+    const t = THREE.MathUtils.clamp((now - leaving.start) / ms, 0, 1);
+    if (t <= 0) return;
+    if (!this.reducedMotion) view.mesh.position.y = TOP - easeIn(t) * 0.6;
+    fade(view.mesh, 1 - easeOut(t));
+    if (t >= 1) this.removePiece(id, view);
   }
 
   private animatePieces(now: number, dt: number): void {
     const ease = Math.min(1, dt * 12);
-    for (const view of this.pieces.values()) {
+    for (const [id, view] of this.pieces) {
       if (!view.hop && view.queue.length > 0 && now >= view.waitUntil) {
         const next = view.queue.shift();
         if (next) view.hop = { ...next, from: view.mesh.position.clone(), start: now };
@@ -387,7 +415,10 @@ export class BoardScene {
         const dx = hop.to.x - hop.from.x;
         const dz = hop.to.z - hop.from.z;
         if (Math.hypot(dx, dz) > 0.2 && hop.height < 1) target = headingOf(dx, dz);
-        if (t >= 1) view.hop = null;
+        if (t >= 1) {
+          view.hop = null;
+          hop.onLand?.();
+        }
       }
       const fixed = view.mesh.userData.fixedHeading as number | null;
       if (fixed !== null) target = fixed;
@@ -396,6 +427,7 @@ export class BoardScene {
       view.mesh.rotation.y = view.heading;
       const scale = THREE.MathUtils.lerp(view.mesh.scale.x, view.restScale, ease);
       view.mesh.scale.setScalar(scale);
+      this.sinkPiece(id, view, now);
     }
 
     const current = this.state?.phase === "playing" ? this.pieces.get(this.state.turn?.playerId ?? "") : undefined;
@@ -459,95 +491,6 @@ export class BoardScene {
     return canvas.toDataURL();
   }
 
-  // ---------------------------------------------------------------- buildings and ownership
-
-  private syncBuildings(state: PublicState): void {
-    state.props.forEach((prop, index) => {
-      if (!prop) return;
-      const houses = prop.houses;
-      this.replace(this.buildings, index, String(houses), () =>
-        houses > 0 ? this.buildingGroup(index, houses) : null,
-      );
-      const owner = state.players.find((p) => p.id === prop.owner);
-      const key = owner ? `${owner.color}:${prop.mortgaged}` : "";
-      this.replace(this.deeds, index, key, () => (owner ? this.deedGroup(index, owner.color, prop.mortgaged) : null));
-    });
-  }
-
-  private replace(
-    map: Map<number, { key: string; group: THREE.Group }>,
-    index: number,
-    key: string,
-    build: () => THREE.Group | null,
-  ): void {
-    const existing = map.get(index);
-    if (existing?.key === key) return;
-    if (existing) {
-      this.scene.remove(existing.group);
-      disposeTree(existing.group);
-    }
-    map.delete(index);
-    const group = build();
-    if (!group) return;
-    this.scene.add(group);
-    map.set(index, { key, group });
-  }
-
-  private buildingGroup(index: number, houses: number): THREE.Group {
-    const group = new THREE.Group();
-    const hotel = houses === HOTEL;
-    const spots = hotel ? [4] : Array.from({ length: houses }, (_, n) => n);
-    for (const n of spots) {
-      const b = this.building(hotel);
-      b.position.copy(vec(buildingSpot(index, n)));
-      b.rotation.y = (-sideOf(index) * Math.PI) / 2;
-      group.add(b);
-    }
-    return group;
-  }
-
-  private building(hotel: boolean): THREE.Group {
-    const color = hotel ? "#e5322d" : "#16b455";
-    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-    const w = hotel ? 0.46 : 0.15;
-    const h = hotel ? 0.2 : 0.12;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.16), material);
-    body.position.y = h / 2;
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.1, 4), material);
-    roof.rotation.y = Math.PI / 4;
-    roof.scale.x = hotel ? 2.6 : 1;
-    roof.position.y = h + 0.05;
-    for (const m of [body, roof]) m.castShadow = true;
-    const group = new THREE.Group();
-    group.add(body, roof);
-    return group;
-  }
-
-  /** The owner's color along the outer edge of a square, and a dark veil when it is mortgaged. */
-  private deedGroup(index: number, color: number, mortgaged: boolean): THREE.Group {
-    const group = new THREE.Group();
-    const side = sideOf(index);
-    const c = { x: 5 - (index % 10), z: HALF - 0.09 };
-    const strip = new THREE.Mesh(
-      new THREE.BoxGeometry(0.82, 0.05, 0.1),
-      new THREE.MeshStandardMaterial({ color: PLAYER_COLORS[color] ?? "#fff", roughness: 0.4 }),
-    );
-    strip.position.copy(vec(toBoard(c, side), TOP + 0.025));
-    strip.rotation.y = (-side * Math.PI) / 2;
-    strip.castShadow = true;
-    group.add(strip);
-    if (mortgaged && !isCorner(index)) {
-      const veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.94, 1.94),
-        new THREE.MeshBasicMaterial({ color: INK, transparent: true, opacity: 0.55 }),
-      );
-      veil.rotation.set(-Math.PI / 2, 0, (-side * Math.PI) / 2);
-      veil.position.copy(vec(toBoard({ x: c.x, z: HALF - 1 }, side), TOP + 0.003));
-      group.add(veil);
-    }
-    return group;
-  }
-
   // ---------------------------------------------------------------- frame, resize, picking
 
   private frame(now: number): void {
@@ -555,6 +498,7 @@ export class BoardScene {
     this.lastFrame = now;
     this.dice.animate(now, dt);
     this.animatePieces(now, dt);
+    this.effects.update(now);
     this.animateCamera(now);
     if (!this.dice.held) this.controls.update();
     this.renderer.render(this.scene, this.camera);

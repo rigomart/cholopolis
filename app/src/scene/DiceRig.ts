@@ -195,9 +195,10 @@ export class DiceRig {
     if (!enabled) this.canvas.style.cursor = "";
   }
 
-  sync(state: PublicState | null): void {
+  /** With `snap`, a new roll lands where it ends without being thrown, as on the first state. */
+  sync(state: PublicState | null, snap = false): void {
     if (!state) return this.cancel();
-    const first = this.seenRoll === -1;
+    const instant = snap || this.seenRoll === -1;
     if (state.dice && state.rollId !== this.seenRoll) {
       // A toss saved or sent by another version may not parse; the automatic throw stands in.
       const toss = parseDiceToss(state.diceToss) ?? automaticToss(state.rollId);
@@ -214,7 +215,7 @@ export class DiceRig {
       this.rest = [framePose(sim, sim.frameCount - 1, 0), framePose(sim, sim.frameCount - 1, 1)];
       this.dice.forEach((die, n) => die.model.quaternion.copy(faceTurn(state.dice![n]!, sim.up[n]!)));
       this.flight = null;
-      if (!first && !this.reducedMotion) {
+      if (!instant && !this.reducedMotion) {
         const ms = ours ? Math.max(MIN_LEAD_MS, ours.due - now) : fromHand ? CATCH_UP_MS : this.pickupMs(from, toss);
         if (!fromHand) for (const w of from) if (w.velocity.lengthSq() < 0.01) w.velocity.copy(LIFT);
         const lead = { from, to: this.tossWaypoints(toss), start: now, ms };

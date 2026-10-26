@@ -11,7 +11,14 @@ export type ClientMessage =
   | { type: "outdated" };
 
 export type ServerMessage =
-  | { type: "state"; state: PublicState; you: string | null; spectators: string[] }
+  | {
+      type: "state";
+      state: PublicState;
+      you: string | null;
+      spectators: string[];
+      /** The server's clock when sent, so clients can read `state.deadline` against their own. */
+      now: number;
+    }
   | { type: "error"; message: string }
   | { type: "diceHold"; playerId: string; rollId: number; hold: DiceHold | null };
 

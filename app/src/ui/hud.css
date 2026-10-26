@@ -1,0 +1,171 @@
+.players .player > :first-child {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+}
+
+.players li {
+  transition:
+    opacity 0.6s ease,
+    filter 0.6s ease;
+}
+
+ol.players li.out {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.players li.owing .player {
+  animation: row-owing 1.1s ease-in-out infinite;
+}
+
+@keyframes row-owing {
+  50% {
+    border-color: var(--danger);
+    box-shadow: 0 0 12px -2px var(--danger);
+  }
+}
+
+.jail-bars {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  align-self: center;
+  z-index: 1;
+  min-width: 18px;
+  height: 26px;
+  border-block: 2.5px solid #d6d9e4;
+  border-radius: 2px;
+  background: repeating-linear-gradient(90deg, transparent 0 4px, #d6d9e4 4px 6.5px);
+  filter: drop-shadow(0 1px 0 var(--ink));
+  pointer-events: none;
+}
+
+.pips {
+  grid-column: 2 / span 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding-top: 0.2rem;
+}
+
+.pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--pip);
+  box-shadow: inset 0 0 0 1px #0004;
+}
+
+.pip.round {
+  border-radius: 50%;
+}
+
+.pip.start:not(:first-child) {
+  margin-left: 4px;
+}
+
+.pip.set {
+  height: 10px;
+  border-radius: 0;
+  box-shadow:
+    inset 0 0 0 1px #0003,
+    0 0 6px -1px var(--pip);
+}
+
+.pip.set:not(.start) {
+  margin-left: -2px;
+}
+
+.pip.set.start {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.pip.set.end {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.pip.mortgaged {
+  opacity: 0.3;
+  box-shadow: inset 0 0 0 1px var(--pip);
+  background: transparent;
+}
+
+.pip.pop {
+  animation: pip-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes pip-pop {
+  from {
+    scale: 0;
+  }
+  50% {
+    scale: 1.8;
+  }
+}
+
+.count-badge {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 0.25em;
+  padding: 0 0.35em;
+  border-radius: 99px;
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 0.8em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.count-badge.bump {
+  animation: badge-bump 0.6s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes badge-bump {
+  from {
+    scale: 1.9;
+    background: var(--green);
+  }
+}
+
+.log li.fresh {
+  animation: log-in 0.35s ease-out;
+}
+
+@keyframes log-in {
+  from {
+    opacity: 0;
+    translate: 0.8rem 0;
+  }
+}
+
+.confetti {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .pip {
+    width: 6px;
+    height: 6px;
+  }
+
+  .pip.set {
+    height: 8px;
+  }
+}

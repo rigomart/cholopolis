@@ -14,6 +14,8 @@ export interface Table {
   error: { id: number; message: string } | null;
   diceHold: (Extract<ServerMessage, { type: "diceHold" }> & { id: number }) | null;
   send: (msg: ClientMessage) => void;
+  /** The server's clock, as best this tab can tell; compare `state.deadline` against this. */
+  serverNow: () => number;
 }
 
 const PING_MS = 25_000;
@@ -27,6 +29,7 @@ export function useTable(room: string, name: string): Table {
   const [error, setError] = useState<Table["error"]>(null);
   const [diceHold, setDiceHold] = useState<Table["diceHold"]>(null);
   const socket = useRef<WebSocket | null>(null);
+  const skew = useRef(0);
 
   useEffect(() => {
     let stopped = false;
@@ -35,6 +38,9 @@ export function useTable(room: string, name: string): Table {
     let ping: ReturnType<typeof setInterval> | undefined;
 
     const connect = () => {
+      // Each sample lands late by however long the message took, so the largest one is the best
+      // guess. Start over on every connection in case this machine's clock was changed meanwhile.
+      let bestSkew = -Infinity;
       const scheme = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${scheme}://${location.host}/ws/${room}?token=${browserToken()}`);
       socket.current = ws;
@@ -48,6 +54,11 @@ export function useTable(room: string, name: string): Table {
         if (event.data === "pong") return;
         const msg = JSON.parse(String(event.data)) as ServerMessage;
         if (msg.type === "state") {
+          // An older server omits `now`; keep the last estimate.
+          if (Number.isFinite(msg.now)) {
+            bestSkew = Math.max(bestSkew, msg.now - Date.now());
+            skew.current = bestSkew;
+          }
           setState(msg.state);
           setYou(msg.you);
           setSpectators(msg.spectators);
@@ -81,5 +92,7 @@ export function useTable(room: string, name: string): Table {
     else setError({ id: Date.now(), message: "Sin conexión. Reconectando…" });
   }, []);
 
-  return { status, state, you, spectators, error, diceHold, send };
+  const serverNow = useCallback(() => Date.now() + skew.current, []);
+
+  return { status, state, you, spectators, error, diceHold, send, serverNow };
 }
