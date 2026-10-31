@@ -23,6 +23,7 @@ import { Pawn } from "./bits.tsx";
 import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
 import { Confetti } from "./Confetti.tsx";
 import { Pips } from "./Pips.tsx";
+import { PostcardButton } from "./PostcardButton.tsx";
 import { Properties } from "./Properties.tsx";
 import { GamePoints } from "./Ranking.tsx";
 import { ReactionBadge, ReactionTray } from "./Reactions.tsx";
@@ -483,6 +484,7 @@ function Ended({
           <p class="muted">Los demás quedaron en quiebra.</p>
         )}
         <GamePoints state={state} you={you} />
+        <PostcardButton state={state} />
         <div class="ended-actions">
           {asker?.id === you ? (
             <button type="button" class="primary" onClick={onRematch}>

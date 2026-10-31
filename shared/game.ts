@@ -19,6 +19,7 @@ import {
 import { CARDS } from "./cards.ts";
 import { type DiceToss, parseDiceToss } from "./dice.ts";
 import { PIECES } from "./pieces.ts";
+import { type GameStats, recordPayment, recordRent, statsOf } from "./stats.ts";
 
 export const PLAYER_COLORS = [
   "#ff2e88",
@@ -164,6 +165,8 @@ export interface GameState {
   /** Epoch ms the game started; with the table's room it names the game for the leaderboard. */
   startedAt: number | null;
   endedByTime: boolean;
+  /** Counters for the end-of-game postcard. */
+  stats: GameStats;
   /** When the current turn times out (epoch ms); set by the server. */
   deadline: number | null;
   nextId: number;
@@ -222,6 +225,7 @@ export function createGame(): GameState {
     endsAt: null,
     startedAt: null,
     endedByTime: false,
+    stats: {},
     deadline: null,
     nextId: 1,
     decks: { suerte: [], caja: [] },
@@ -239,6 +243,7 @@ export function restoreGame(saved: GameState): GameState {
     endsAt: g.endsAt ?? null,
     startedAt: g.startedAt ?? null,
     endedByTime: g.endedByTime ?? false,
+    stats: g.stats ?? {},
   };
 }
 
@@ -755,6 +760,7 @@ function roll(g: GameState, p: Player, rng: Rng, toss?: DiceToss): void {
   g.diceToss = parseDiceToss(toss);
   g.rollId++;
   log(g, `${p.name} sacó ${d1} y ${d2}${doubles ? " (¡dobles!)" : ""}.`);
+  if (doubles) statsOf(g.stats, p.id).doubles++;
   t.rolledDoubles = false;
 
   if (p.inJail) {
@@ -795,6 +801,7 @@ function buy(g: GameState, p: Player): void {
   if (p.cash < sq.price) fail(`No te alcanza: cuesta ${money(sq.price)}.`);
   p.cash -= sq.price;
   prop(g, p.position).owner = p.id;
+  statsOf(g.stats, p.id).purchases++;
   log(g, `${p.name} compró ${sq.name} por ${money(sq.price)}.`);
   finishLanding(g);
 }
@@ -806,6 +813,7 @@ function build(g: GameState, p: Player, index: number): void {
   const pr = prop(g, index);
   pr.houses++;
   p.cash -= sq.houseCost;
+  statsOf(g.stats, p.id).built++;
   log(g, `${p.name} construyó ${pr.houses === HOTEL ? "un hotel" : "una casa"} en ${sq.name}.`);
 }
 
@@ -875,6 +883,7 @@ function walk(g: GameState, p: Player, steps: number): void {
   g.moves.push({ id: g.nextId++, playerId: p.id, from, to: p.position, steps });
   if (steps > 0 && p.position < from) {
     p.cash += SALIDA_BONUS;
+    statsOf(g.stats, p.id).laps++;
     log(g, `${p.name} pasó por Salida y cobró ${money(SALIDA_BONUS)}.`);
   }
 }
@@ -888,6 +897,7 @@ function sendToJail(g: GameState, p: Player): void {
   p.position = JAIL_SQUARE;
   p.inJail = true;
   p.jailTurns = 0;
+  statsOf(g.stats, p.id).jailed++;
   log(g, `${p.name} fue al Penal.`);
   if (g.turn?.playerId === p.id) {
     g.turn.rolledDoubles = false;
@@ -914,7 +924,9 @@ function land(g: GameState, p: Player, diceTotal: number, mods: RentModifiers = 
         if (pr.mortgaged) {
           log(g, `${sq.name} está hipotecada: no se paga alquiler.`);
         } else {
-          pay(g, p, rentFor(g, index, diceTotal, mods), pr.owner, `alquiler de ${sq.name}`);
+          const rent = rentFor(g, index, diceTotal, mods);
+          pay(g, p, rent, pr.owner, `alquiler de ${sq.name}`);
+          recordRent(g.stats, p.id, pr.owner, index, rent);
         }
       }
       return;
@@ -1002,6 +1014,7 @@ function pay(g: GameState, payer: Player, amount: number, toId: string | null, r
   const to = toId ? findPlayer(g, toId) : undefined;
   charge(payer, amount, to?.id ?? null);
   if (to) to.cash += amount;
+  recordPayment(g.stats, payer.id, amount, !to);
   log(g, `${payer.name} pagó ${money(amount)} a ${to?.name ?? "el banco"}${reason ? ` (${reason})` : ""}.`);
   if (payer.cash < 0) log(g, `${payer.name} debe ${money(-payer.cash)}: vende, hipoteca o declárate en quiebra.`);
 }
@@ -1045,6 +1058,7 @@ function goBankrupt(g: GameState, p: Player, toBank = false): void {
   if (heir) {
     if (p.cash > 0) heir.cash += p.cash;
     heir.jailCards.push(...p.jailCards);
+    statsOf(g.stats, heir.id).knockouts++;
   } else {
     for (const deck of p.jailCards) returnJailCard(g, deck);
   }

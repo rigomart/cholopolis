@@ -1,0 +1,26 @@
+.postcard {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  margin-top: 1rem;
+}
+
+button.postcard-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--ink);
+  font-weight: 800;
+  box-shadow: 0.2em 0.2em 0 var(--pink);
+}
+
+button.postcard-share:hover:not(:disabled) {
+  background: #8dffbf;
+  border-color: #8dffbf;
+}
+
+.postcard-note {
+  font-size: 0.9rem;
+}

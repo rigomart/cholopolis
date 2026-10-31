@@ -38,6 +38,25 @@ Classic Monopoly with these choices:
 - When a game ends, the host (or the first player still there if the host left) can start a
   rematch: the table goes back to its lobby with the same players, pieces, colors, host and
   length, and fresh cash and board. Players who left lose their seat; spectators can sit.
+
+## Postcard
+
+The end screen has a "Compartir postal" button for everyone at the table, spectators too.
+It makes a 1080×1350 PNG: the final board from a fixed camera (pieces and buildings as they
+ended, in the scene's current light: a timed game ends at night, so its postcard is a night
+shot with the streetlights on), the wordmark, the winner, three of the game's
+most notable stats ("Rosa pagó S/4,300 de alquiler en la Javier Prado") and the site URL.
+Phones open the share sheet with the image (WhatsApp and friends); browsers that can't
+share files download it. Without WebGL the postcard has no board photo. It is all drawn in
+the browser: nothing is uploaded.
+
+The stats come from a small record the rules engine keeps per player in the game state
+(`stats`, see `shared/stats.ts`): rent paid and collected (in total and by square), trips to
+the Penal, laps, doubles, purchases, buildings, money paid to the bank, the biggest single
+payment and rivals bankrupted. `shared/highlights.ts` picks the lines: each stat is scored
+against what is usual for it, at most one line per kind and two per player. A rematch
+starts the record over.
+
 - Each turn has a 60-second clock (10 seconds for a disconnected player). When it runs
   out, the table plays the obvious move: roll, decline, end turn, or settle debts.
 - A player who stays disconnected through 3 turns in a row that time out forfeits: they

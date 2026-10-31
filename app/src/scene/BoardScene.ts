@@ -13,6 +13,7 @@ import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
 import { Estates, setWindowGlow } from "./estates.ts";
 import { BOARD_SIZE, INNER, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
 import { buildPiece } from "./pieces.ts";
+import { snapshotScene } from "./snapshot.ts";
 import { registerThumbnails } from "./thumbnails.ts";
 
 const THICKNESS = 0.35;
@@ -478,6 +479,17 @@ export class BoardScene {
       const pulse = this.reducedMotion ? 1 : 1 + Math.sin(now / 220) * 0.08;
       this.ring.scale.setScalar(pulse * current.mesh.scale.x);
     }
+  }
+
+  /** The board as it stands, from a fixed camera, for the end-of-game postcard. */
+  snapshot(width: number, height: number): HTMLCanvasElement {
+    return snapshotScene(
+      this.renderer,
+      this.scene,
+      this.camera.position.distanceTo(this.controls.target),
+      width,
+      height,
+    );
   }
 
   /** A transparent PNG of one token, for the player list and the piece picker. */
