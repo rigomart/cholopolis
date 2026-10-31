@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 
 import { MAX_PLAYERS } from "../../../shared/board.ts";
-import { findPlayer, TIME_LIMITS } from "../../../shared/game.ts";
+import { findPlayer, PLAYER_COLORS, TIME_LIMITS } from "../../../shared/game.ts";
 import { PIECES } from "../../../shared/pieces.ts";
 import type { Table } from "../useTable.ts";
 import { Pawn, Wordmark } from "./bits.tsx";
@@ -49,7 +49,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
 
         <ul class="roster">
           {state.players.map((p) => (
-            <li key={p.id} class={p.connected ? "" : "away"}>
+            <li key={p.id} class={p.connected ? "" : "away"} style={{ "--seat": PLAYER_COLORS[p.color] }}>
               <Pawn player={p} />
               <span class="roster-name">
                 {p.name}

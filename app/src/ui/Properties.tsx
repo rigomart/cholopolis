@@ -51,7 +51,7 @@ export function Properties({ state, me, act, onInspect, onClose }: Props) {
           const mortgage = mortgageError(state, me.id, i);
           const unmortgage = unmortgageError(state, me.id, i);
           return (
-            <li key={i} class={prop.mortgaged ? "mortgaged" : ""}>
+            <li key={i} class={prop.mortgaged ? "mortgaged" : ""} style={{ "--group": squareColor(sq) }}>
               <span class="swatch" style={{ background: squareColor(sq) }} />
               <button type="button" class="prop-name" onClick={() => onInspect(i)}>
                 {sq.name}
