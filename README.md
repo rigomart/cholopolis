@@ -4,7 +4,13 @@ A 3D Monopoly-style game set on Peru's best-known avenues, for up to 8 anonymous
 Live at https://cholopolis.rigos.dev.
 
 Open the page, type a name, press Entrar. The home page seats you at a table that is
-waiting for players, or opens a new one; each table has a shareable link (`/mesa/<id>`).
+waiting for players, or opens a new one ("Crear mesa nueva" always opens a fresh one).
+Each table has a shareable link (`/mesa/<id>`) and a code, the `<id>`. To join a
+specific table, open its link, or type the code (any case, spaces allowed) or paste the
+whole link into "¿Tienes un código?". A code nobody ever opened, or whose table expired,
+gets "No encontramos esa mesa" instead of an empty table (`GET /api/mesa/<code>` asks the
+`Table` whether it has been opened). A table that is already playing admits you as a
+spectator.
 Whoever opened the table starts the game once at least two players are in, and can fill
 empty seats with bots ("Agregar bot") to play right away. People who arrive after the
 start, or when all 8 seats are taken, watch as spectators.
