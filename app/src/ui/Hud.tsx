@@ -6,6 +6,7 @@ import { JAIL_FINE, square } from "../../../shared/board.ts";
 import {
   type Action,
   debtors,
+  debtsOf,
   type DrawnCard,
   findPlayer,
   type LogEntry,
@@ -255,13 +256,16 @@ function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps)
   const myTurn = me?.id === state.turn.playerId;
 
   if (me && me.cash < 0 && !me.bankrupt) {
-    const creditor = findPlayer(state, me.creditor);
+    const parts = debtsOf(me).map(
+      (d) => `${money(d.amount)} ${d.to ? `a ${findPlayer(state, d.to)?.name}` : "al banco"}`,
+    );
+    const owed =
+      parts.length > 1
+        ? `${money(-me.cash)}: ${new Intl.ListFormat("es-PE").format(parts)}`
+        : (parts[0] ?? `${money(-me.cash)} al banco`);
     return (
       <div class="actions alert-bar">
-        <p>
-          Debes {money(-me.cash)} a {creditor?.name ?? "el banco"}. Vende casas o hipoteca en Mis propiedades, o negocia
-          un trato.
-        </p>
+        <p>Debes {owed}. Vende casas o hipoteca en Mis propiedades, o negocia un trato.</p>
         <button
           type="button"
           class="danger"

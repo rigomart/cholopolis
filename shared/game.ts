@@ -35,6 +35,8 @@ export const PLAYER_COLORS = [
 export const HOTEL = 5;
 const LOG_LIMIT = 80;
 const TRADE_LIMIT_PER_PLAYER = 1;
+/** Turns timed out while disconnected before the seat is given up. */
+const ABANDON_AFTER_TURNS = 3;
 
 export type Rng = () => number;
 export type Stage = "roll" | "buy" | "done";
@@ -52,9 +54,20 @@ export interface Player {
   /** Decks the held "Sal libre del Penal" cards came from, so they go back to the right one. */
   jailCards: Deck[];
   bankrupt: boolean;
-  /** Who is owed while cash is negative; null is the bank. */
-  creditor: string | null;
+  /**
+   * What was left unpaid, oldest first, when payments pushed cash below zero. Read it with
+   * `debtsOf`: only the part still matching a negative balance counts.
+   */
+  debts: Debt[];
   connected: boolean;
+  /** Turns of theirs in a row that timed out while they were disconnected. */
+  idleTurns: number;
+}
+
+/** Money owed to a player, or to the bank when `to` is null. */
+export interface Debt {
+  to: string | null;
+  amount: number;
 }
 
 export interface Property {
@@ -84,6 +97,8 @@ export interface Turn {
   stage: Stage;
   doubles: number;
   rolledDoubles: boolean;
+  /** Set once the clock has run out on this turn. */
+  timedOut?: boolean;
 }
 
 /** One piece movement, so clients can animate a walk along the board or a jump straight to the Penal. */
@@ -186,7 +201,17 @@ export function createGame(): GameState {
 /** A game as saved by any version: dice data this one can't replay is dropped. */
 export function restoreGame(saved: GameState): GameState {
   const { toss: _legacy, ...g } = saved as GameState & { toss?: unknown };
-  return { ...g, diceToss: parseDiceToss(g.diceToss) };
+  return { ...g, diceToss: parseDiceToss(g.diceToss), players: g.players.map(restorePlayer) };
+}
+
+/** Fills what older saves lack; a single `creditor` becomes the debt it stood for. */
+function restorePlayer(saved: Player): Player {
+  const { creditor, ...p } = saved as Player & { creditor?: string | null };
+  return {
+    ...p,
+    debts: p.debts ?? (p.cash < 0 ? [{ to: creditor ?? null, amount: -p.cash }] : []),
+    idleTurns: p.idleTurns ?? 0,
+  };
 }
 
 export function toPublic(g: GameState): PublicState {
@@ -212,6 +237,35 @@ export function activePlayers(g: PublicState): Player[] {
 
 export function debtors(g: PublicState): Player[] {
   return activePlayers(g).filter((p) => p.cash < 0);
+}
+
+/**
+ * Who a negative balance is owed to, one entry per creditor in the order they were first left
+ * unpaid, adding up to the balance. Cash won back since clears the oldest debts first.
+ */
+export function debtsOf(p: Player): Debt[] {
+  let excess = p.debts.reduce((sum, d) => sum + d.amount, 0) - Math.max(0, -p.cash);
+  const owed = new Map<string | null, number>();
+  for (const d of p.debts) {
+    const cleared = Math.min(d.amount, Math.max(0, excess));
+    excess -= cleared;
+    if (d.amount > cleared) owed.set(d.to, (owed.get(d.to) ?? 0) + d.amount - cleared);
+  }
+  return [...owed].map(([to, amount]) => ({ to, amount }));
+}
+
+/** Cash a player can use: what they hold minus payments from debtors who could not cover them. */
+function spendable(g: PublicState, id: string): number {
+  let cash = findPlayer(g, id)?.cash ?? 0;
+  for (const d of debtors(g)) for (const owed of debtsOf(d)) if (owed.to === id) cash -= owed.amount;
+  return cash;
+}
+
+/** The creditor owed the most, who inherits a bankrupt debtor; null is the bank. */
+export function mainCreditor(p: Player): string | null {
+  let best: Debt | undefined;
+  for (const d of debtsOf(p)) if (!best || d.amount > best.amount) best = d;
+  return best?.to ?? null;
 }
 
 export function canDragDice(g: PublicState, playerId: string | null, rollId: number): boolean {
@@ -297,7 +351,7 @@ export function buildError(g: PublicState, playerId: string, index: number): str
   if (group.some((i) => g.props[i]?.mortgaged)) return "Hay una propiedad hipotecada en el grupo.";
   if (p.houses >= HOTEL) return "Ya tiene hotel.";
   if (p.houses > Math.min(...group.map((i) => g.props[i]?.houses ?? 0))) return "Construye parejo en el grupo.";
-  const cash = findPlayer(g, playerId)?.cash ?? 0;
+  const cash = spendable(g, playerId);
   if (cash < sq.houseCost) return `Necesitas ${money(sq.houseCost)}.`;
   const used = buildingsInUse(g);
   if (p.houses === 4 && used.hotels >= HOTEL_SUPPLY) return "El banco no tiene hoteles.";
@@ -334,7 +388,7 @@ export function unmortgageError(g: PublicState, playerId: string, index: number)
   if (!p || !isOwnable(sq)) return "Esa casilla no se puede hipotecar.";
   if (p.owner !== playerId) return "No es tuya.";
   if (!p.mortgaged) return "No está hipotecada.";
-  const cash = findPlayer(g, playerId)?.cash ?? 0;
+  const cash = spendable(g, playerId);
   if (cash < unmortgageCost(sq)) return `Necesitas ${money(unmortgageCost(sq))}.`;
   return null;
 }
@@ -349,7 +403,7 @@ export function tradeSideError(g: PublicState, owner: Player, side: TradeSide): 
     }
   }
   if (!Number.isInteger(side.cash) || side.cash < 0) return "Monto inválido.";
-  if (side.cash > Math.max(0, owner.cash)) return `${owner.name} no tiene ${money(side.cash)}.`;
+  if (side.cash > Math.max(0, spendable(g, owner.id))) return `${owner.name} no tiene ${money(side.cash)}.`;
   if (side.jailCards > owner.jailCards.length) return `${owner.name} no tiene esa tarjeta.`;
   return null;
 }
@@ -392,8 +446,9 @@ export function addPlayer(g: GameState, id: string, rawName: string): Player {
     jailTurns: 0,
     jailCards: [],
     bankrupt: false,
-    creditor: null,
+    debts: [],
     connected: true,
+    idleTurns: 0,
   };
   g.players.push(p);
   g.hostId ??= id;
@@ -412,7 +467,10 @@ export function removePlayer(g: GameState, id: string): void {
 
 /** Marks who has an open connection; in the lobby, hands the host role to someone present. */
 export function syncPresence(g: GameState, connected: Set<string>): void {
-  for (const p of g.players) p.connected = connected.has(p.id);
+  for (const p of g.players) {
+    p.connected = connected.has(p.id);
+    if (p.connected) p.idleTurns = 0;
+  }
   if (g.phase === "lobby" && !findPlayer(g, g.hostId)?.connected) {
     g.hostId = g.players.find((p) => p.connected)?.id ?? g.hostId;
   }
@@ -445,6 +503,7 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
   if (g.phase !== "playing") fail("La partida no está en curso.");
   const p = player(g, playerId);
   if (p.bankrupt) fail("Estás en quiebra.");
+  p.idleTurns = 0;
 
   switch (action.type) {
     case "roll":
@@ -506,7 +565,7 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
       g.trades = g.trades.filter((x) => !(x.id === action.trade && x.from === p.id));
       return;
     case "bankrupt":
-      return goBankrupt(g, p, p.cash < 0 ? p.creditor : null);
+      return goBankrupt(g, p);
   }
 }
 
@@ -796,21 +855,44 @@ function returnJailCard(g: GameState, deck: Deck): void {
 
 /**
  * Charges in full even past zero. A negative balance blocks the game until the debtor
- * raises the money (selling, mortgaging, trading) or goes bankrupt.
+ * raises the money (selling, mortgaging, trading) or goes bankrupt. The payee is credited at
+ * once; whatever the payer could not cover is remembered as a debt, and goes back to the bank
+ * if the payer ends up bankrupt.
  */
 function pay(g: GameState, payer: Player, amount: number, toId: string | null, reason?: string): void {
   if (amount <= 0) return;
   const to = toId ? findPlayer(g, toId) : undefined;
-  payer.cash -= amount;
+  charge(payer, amount, to?.id ?? null);
   if (to) to.cash += amount;
-  if (payer.cash < 0) payer.creditor = to?.id ?? null;
   log(g, `${payer.name} pagó ${money(amount)} a ${to?.name ?? "el banco"}${reason ? ` (${reason})` : ""}.`);
   if (payer.cash < 0) log(g, `${payer.name} debe ${money(-payer.cash)}: vende, hipoteca o declárate en quiebra.`);
 }
 
-function goBankrupt(g: GameState, p: Player, creditorId: string | null): void {
-  const creditor = findPlayer(g, creditorId);
+/** Takes `amount` from `p`, noting the part their cash could not cover as owed to `toId`. */
+function charge(p: Player, amount: number, toId: string | null): void {
+  p.debts = debtsOf(p);
+  const unpaid = amount - Math.min(amount, Math.max(0, p.cash));
+  p.cash -= amount;
+  if (unpaid > 0) p.debts.push({ to: toId, amount: unpaid });
+}
+
+/** `toBank` gives everything up to the bank instead of to the creditor owed the most. */
+function goBankrupt(g: GameState, p: Player, toBank = false): void {
+  const owed = debtsOf(p);
+  const creditor = toBank ? undefined : findPlayer(g, mainCreditor(p));
   const heir = creditor && !creditor.bankrupt && creditor.id !== p.id ? creditor : null;
+  // Creditors were paid in full up front; the part the debtor never had goes back.
+  let clawedBack = 0;
+  for (const d of owed) {
+    const c = findPlayer(g, d.to);
+    if (!c || c.bankrupt || c.id === p.id) continue;
+    charge(c, d.amount, null);
+    clawedBack += d.amount;
+    if (c.cash < 0) log(g, `${c.name} debe ${money(-c.cash)}: vende, hipoteca o declárate en quiebra.`);
+  }
+  for (const other of g.players) {
+    for (const d of other.debts) if (d.to === p.id) d.to = heir?.id ?? null;
+  }
   for (const i of ownedBy(g, p.id)) {
     const pr = prop(g, i);
     const sq = square(i);
@@ -828,8 +910,10 @@ function goBankrupt(g: GameState, p: Player, creditorId: string | null): void {
   } else {
     for (const deck of p.jailCards) returnJailCard(g, deck);
   }
+  if (clawedBack > 0) log(g, `${money(clawedBack)} que ${p.name} no pudo pagar vuelven al banco.`);
   p.jailCards = [];
   p.cash = 0;
+  p.debts = [];
   p.bankrupt = true;
   p.inJail = false;
   g.trades = g.trades.filter((t) => t.from !== p.id && t.to !== p.id);
@@ -856,7 +940,7 @@ export function autoPlay(g: GameState, rng: Rng): void {
   if (owing.length > 0) {
     for (const d of owing) {
       raiseCash(g, d);
-      if (d.cash < 0) goBankrupt(g, d, d.creditor);
+      if (d.cash < 0) goBankrupt(g, d);
     }
     return;
   }
@@ -864,9 +948,24 @@ export function autoPlay(g: GameState, rng: Rng): void {
   const p = findPlayer(g, t?.playerId);
   if (!t || !p) return;
   log(g, `Se acabó el tiempo de ${p.name}.`);
+  let idleTurns = p.idleTurns;
+  if (isAway(p) && !t.timedOut) {
+    t.timedOut = true;
+    idleTurns++;
+  }
+  if (idleTurns >= ABANDON_AFTER_TURNS) {
+    log(g, `${p.name} sigue desconectado y abandona la partida.`);
+    return goBankrupt(g, p, true);
+  }
   const action: Action =
     t.stage === "roll" ? { type: "roll" } : t.stage === "buy" ? { type: "decline" } : { type: "endTurn" };
   act(g, p.id, action, rng);
+  p.idleTurns = idleTurns;
+}
+
+/** Whether the table is playing for them because nobody is at their seat. */
+function isAway(p: Player): boolean {
+  return !p.connected;
 }
 
 /** Sells buildings, then mortgages, until the debt is covered or nothing is left. */

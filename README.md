@@ -15,11 +15,19 @@ Classic Monopoly with these choices:
 - No auctions: a square you decline to buy stays unowned.
 - Payments always go through. If you can't cover one, your cash goes negative and the
   game waits while you sell buildings, mortgage, or trade your way back to zero, or go
-  bankrupt. Bankrupt to a player: they get your properties. To the bank: they go back
-  on the market.
+  bankrupt. The payee is credited at once, but what you couldn't cover is remembered as
+  owed to them (or to the bank). Cash you win back clears the oldest debts first.
+- Going bankrupt gives your properties and half your building value to the player you
+  owe the most (ties go to whoever you left unpaid first); if that's the bank, they go
+  back on the market. Every creditor returns the part of its payment you never had to
+  the bank, so bankruptcy never creates money. Until then that part can't be spent on
+  trades, building or lifting mortgages.
 - Building is even across a color group, with the bank's 32 houses and 12 hotels.
 - Each turn has a 60-second clock (10 seconds for a disconnected player). When it runs
   out, the table plays the obvious move: roll, decline, end turn, or settle debts.
+- A player who stays disconnected through 3 turns in a row that time out forfeits: they
+  go bankrupt to the bank and their properties go back on the market. Acting or
+  reconnecting resets the count.
 
 ## How it works
 
