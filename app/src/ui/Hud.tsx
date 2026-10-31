@@ -107,8 +107,8 @@ export function Hud({
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
         <GameClock state={state} now={serverNow} />
-        <TurnClock state={state} you={you} now={serverNow} />
-        <ActionBar state={state} me={me} act={act} shaking={shaking} onRoll={onRoll} rolling={rolling} />
+        <TurnClock state={state} you={you} shaking={shaking} now={serverNow} />
+        <ActionBar state={state} me={me} act={act} onRoll={onRoll} rolling={rolling} />
         <div class="toolbar">
           {canTrade && (
             <>
@@ -262,14 +262,12 @@ interface ActionBarProps {
   state: PublicState;
   me: Player | undefined;
   act: (a: Action) => void;
-  shaking: string | null;
   onRoll: () => void;
   rolling: boolean;
 }
 
-function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps) {
+function ActionBar({ state, me, act, onRoll, rolling }: ActionBarProps) {
   if (state.phase !== "playing" || !state.turn) return null;
-  const current = findPlayer(state, state.turn.playerId);
   const owing = debtors(state);
   const myTurn = me?.id === state.turn.playerId;
 
@@ -294,25 +292,8 @@ function ActionBar({ state, me, act, shaking, onRoll, rolling }: ActionBarProps)
       </div>
     );
   }
-  if (owing.length > 0) {
-    return (
-      <div class="actions">
-        <p>Esperando a que {owing.map((p) => p.name).join(" y ")} pague sus deudas.</p>
-      </div>
-    );
-  }
-  if (!myTurn || !me) {
-    return (
-      <div class="actions">
-        <p>
-          {current && <Pawn player={current} size={14} />}{" "}
-          {shaking && shaking === current?.id
-            ? `${current.name} está revolviendo los dados…`
-            : `Juega ${current?.name}.`}
-        </p>
-      </div>
-    );
-  }
+  // Someone else's turn or debt is the clock's to say.
+  if (owing.length > 0 || !myTurn || !me) return null;
 
   const here = square(me.position);
   switch (state.turn.stage) {
