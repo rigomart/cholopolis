@@ -34,13 +34,13 @@ export function Properties({ state, me, act, onInspect, onClose }: Props) {
   return (
     <aside class="sheet" aria-labelledby="props-title">
       <header class="sheet-head">
-        <h2 id="props-title">Mis propiedades</h2>
+        <h2 id="props-title">Propiedades</h2>
         <button type="button" class="link" onClick={onClose}>
           Cerrar
         </button>
       </header>
-      {me.cash < 0 && <p class="alert">Debes {money(-me.cash)}. Vende casas o hipoteca hasta quedar en cero o más.</p>}
-      {owned.length === 0 && <p class="muted">Todavía no tienes propiedades. Cae en una sin dueño y cómprala.</p>}
+      {me.cash < 0 && <p class="alert">Debes {money(-me.cash)}</p>}
+      {owned.length === 0 && <p class="muted">Aún no tienes propiedades.</p>}
       <ul class="props">
         {owned.map((i) => {
           const sq = square(i);

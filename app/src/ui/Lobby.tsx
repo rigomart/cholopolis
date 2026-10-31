@@ -36,14 +36,13 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
     <main class="lobby-wrap">
       <section class="panel lobby" aria-labelledby="lobby-title">
         <Wordmark small />
-        <h2 id="lobby-title">Mesa {room}</h2>
-        <p class="muted">
-          {present} de {MAX_PLAYERS} jugadores. Pasa el enlace para que entren tus amigos, o completa la mesa con bots.
-        </p>
-        <div class="share">
-          <input readOnly value={link} aria-label="Enlace de la mesa" onFocus={(e) => e.currentTarget.select()} />
-          <button type="button" onClick={copy}>
-            {copied ? "Copiado" : "Copiar enlace"}
+        <div class="lobby-head">
+          <h2 id="lobby-title">Mesa {room}</h2>
+          <span class="seat-count" title="Jugadores en la mesa">
+            {present}/{MAX_PLAYERS}
+          </span>
+          <button type="button" class="share" title={link} onClick={copy}>
+            {copied ? "¡Copiado!" : "Copiar enlace"}
           </button>
         </div>
 
@@ -53,12 +52,15 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
               <Pawn player={p} />
               <span class="roster-name">
                 {p.name}
-                {p.id === you && <span class="muted"> (tú)</span>}
+                {p.id === you && <span class="you-tag">tú</span>}
+                {!p.connected && <span class="visually-hidden"> (desconectado)</span>}
               </span>
               <ReactionBadge bubble={table.reactions.bubbles[p.id]} name={p.name} />
-              {p.id === state.hostId && <span class="tag">abre la partida</span>}
-              {p.bot && <span class="tag">bot</span>}
-              {!p.connected && <span class="muted">desconectado</span>}
+              {p.id === state.hostId && (
+                <span class="tag" title="Abre la partida">
+                  anfitrión
+                </span>
+              )}
               {p.bot && hosting && (
                 <button
                   type="button"
@@ -74,11 +76,9 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
         </ul>
         {hosting && state.players.length < MAX_PLAYERS && (
           <button type="button" class="add-bot" onClick={() => send({ type: "action", action: { type: "addBot" } })}>
-            Agregar bot
+            + Agregar bot
           </button>
         )}
-
-        {me && <ReactionTray table={table} open />}
 
         {me && (
           <fieldset class="pieces">
@@ -119,11 +119,12 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
               </button>
             ))
           ) : (
-            <p class="muted">
-              {state.timeLimit === null
-                ? "Sin límite de tiempo."
-                : `${state.timeLimit} minutos. Gana quien tenga más patrimonio al terminar.`}
-            </p>
+            <span
+              class="length mine"
+              title={state.timeLimit === null ? undefined : "Al terminar gana el mayor patrimonio"}
+            >
+              {state.timeLimit === null ? "Sin límite" : `${state.timeLimit} min`}
+            </span>
           )}
         </fieldset>
 
@@ -135,27 +136,25 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
               disabled={present < 2}
               onClick={() => send({ type: "action", action: { type: "start" } })}
             >
-              {present < 2 ? "Falta al menos un jugador más" : "Empezar partida"}
+              {present < 2 ? "Falta otro jugador" : "Empezar partida"}
             </button>
           ) : (
-            <p class="waiting">Esperando a que {host?.name ?? "el anfitrión"} empiece la partida.</p>
+            <p class="waiting">Esperando a que {host?.name ?? "el anfitrión"} empiece…</p>
           )
         ) : seatFree ? (
-          <>
-            <p class="waiting">Hay un lugar libre en la mesa.</p>
-            <button type="button" class="primary" onClick={() => send({ type: "join", name })}>
-              Sentarme
-            </button>
-          </>
+          <button type="button" class="primary big" onClick={() => send({ type: "join", name })}>
+            Sentarme
+          </button>
         ) : (
           <>
-            <p class="waiting">Esta mesa está llena. Puedes mirar o abrir otra.</p>
+            <p class="waiting">Mesa llena.</p>
             <button type="button" class="primary" onClick={onNewRoom}>
               Abrir otra mesa
             </button>
           </>
         )}
         <div class="lobby-foot">
+          {me && <ReactionTray table={table} />}
           {spectators.length > 0 && <span class="muted">Mirando: {spectators.join(", ")}</span>}
           <button type="button" class="link" onClick={onLeave}>
             Salir de la mesa

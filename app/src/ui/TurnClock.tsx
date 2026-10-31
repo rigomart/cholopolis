@@ -36,14 +36,19 @@ export function GameClock({ state, now }: { state: PublicState; now: () => numbe
   const time = useNow(endsAt !== null, 500, now);
   if (endsAt === null) return null;
   const left = endsAt - time;
-  if (left <= 0) return <div class="game-clock over">Se acabó el tiempo: la partida termina al cambiar de turno</div>;
+  if (left <= 0) return <div class="game-clock over">Último turno</div>;
   const seconds = Math.ceil(left / 1000);
   const hours = Math.floor(seconds / 3600);
   const rest = seconds % 3600;
   const text = `${hours > 0 ? `${hours}:` : ""}${String(Math.floor(rest / 60)).padStart(hours > 0 ? 2 : 1, "0")}:${String(rest % 60).padStart(2, "0")}`;
   return (
-    <div class={left <= 5 * 60_000 ? "game-clock soon" : "game-clock"} role="timer" aria-label="Tiempo de partida">
-      Quedan <span class="game-clock-time">{text}</span>
+    <div
+      class={left <= 5 * 60_000 ? "game-clock soon" : "game-clock"}
+      role="timer"
+      aria-label="Tiempo de partida"
+      title="Tiempo de partida"
+    >
+      <span aria-hidden="true">⏳</span> <span class="game-clock-time">{text}</span>
     </div>
   );
 }
@@ -73,10 +78,12 @@ interface ClockProps {
   /** Who has the dice in hand right now, if anyone. */
   shaking: string | null;
   now: () => number;
+  /** Replaces "Tu turno" when the table waits on you. */
+  label?: string;
 }
 
 /** The turn status line and countdown for whoever the table is waiting on; the large form when that is you. */
-export function TurnClock({ state, you, shaking, now }: ClockProps) {
+export function TurnClock({ state, you, shaking, now, label: yourLabel }: ClockProps) {
   const countdown = useCountdown(state, now);
   const waiting = awaited(state);
   const yours = waiting.some((p) => p.id === you);
@@ -92,9 +99,7 @@ export function TurnClock({ state, you, shaking, now }: ClockProps) {
   const owing = debtors(state).length > 0;
   const names = waiting.map((p) => p.name).join(" y ");
   const label = yours
-    ? owing
-      ? "Paga tu deuda"
-      : "Tu turno"
+    ? (yourLabel ?? (owing ? "Paga tu deuda" : "Tu turno"))
     : waiting.every((p) => !p.connected)
       ? `Esperando a ${names} (sin conexión)`
       : owing
