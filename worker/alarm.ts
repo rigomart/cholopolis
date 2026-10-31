@@ -7,6 +7,8 @@ const ON_TIME_TOLERANCE_MS = 250;
 export interface AlarmInputs {
   /** Open sockets, players and spectators alike. */
   sockets: number;
+  /** When an empty table expires, or null while it has an open socket. */
+  expiresAt: number | null;
   /** When the turn clock runs out, or null when nobody is on the clock. */
   deadline: number | null;
   /** When the next bot move is due, or null when no bot has anything to do. */
@@ -20,15 +22,15 @@ export type AlarmTask = "expire" | "bot" | "clock" | "wait";
  * When the alarm should next ring, or null for no alarm. With nobody watching the table only
  * counts down to expiry: bots don't play to an empty room.
  */
-export function nextAlarm({ sockets, deadline, botAt, now }: AlarmInputs): number | null {
-  if (sockets === 0) return now + EXPIRE_MS;
+export function nextAlarm({ sockets, expiresAt, deadline, botAt, now }: AlarmInputs): number | null {
+  if (sockets === 0) return expiresAt ?? now + EXPIRE_MS;
   const due = [deadline, botAt].filter((t) => t !== null);
   return due.length > 0 ? Math.min(...due) : null;
 }
 
 /** What a ringing alarm should do; a due bot move goes before a due clock. */
-export function alarmTask({ sockets, deadline, botAt, now }: AlarmInputs): AlarmTask {
-  if (sockets === 0) return "expire";
+export function alarmTask({ sockets, expiresAt, deadline, botAt, now }: AlarmInputs): AlarmTask {
+  if (sockets === 0) return expiresAt !== null && now >= expiresAt ? "expire" : "wait";
   if (botAt !== null && now >= botAt - ON_TIME_TOLERANCE_MS) return "bot";
   if (deadline !== null && now >= deadline - ON_TIME_TOLERANCE_MS) return "clock";
   return "wait";

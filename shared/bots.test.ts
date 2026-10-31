@@ -210,21 +210,21 @@ describe("the table alarm", () => {
   const now = 1_000_000;
 
   test("with nobody watching it only counts down to expiry, bots or not", () => {
-    const idle = { sockets: 0, deadline: now + 5000, botAt: now + 100, now };
+    const idle = { sockets: 0, expiresAt: now + EXPIRE_MS, deadline: now + 5000, botAt: now + 100, now };
     expect(nextAlarm(idle)).toBe(now + EXPIRE_MS);
     expect(alarmTask({ ...idle, now: now + EXPIRE_MS })).toBe("expire");
   });
 
   test("wakes for whichever comes first, the bot move or the turn clock", () => {
-    expect(nextAlarm({ sockets: 1, deadline: now + 60_000, botAt: now + 1000, now })).toBe(now + 1000);
-    expect(nextAlarm({ sockets: 1, deadline: now + 500, botAt: now + 1000, now })).toBe(now + 500);
-    expect(nextAlarm({ sockets: 1, deadline: null, botAt: null, now })).toBe(null);
+    expect(nextAlarm({ sockets: 1, expiresAt: null, deadline: now + 60_000, botAt: now + 1000, now })).toBe(now + 1000);
+    expect(nextAlarm({ sockets: 1, expiresAt: null, deadline: now + 500, botAt: now + 1000, now })).toBe(now + 500);
+    expect(nextAlarm({ sockets: 1, expiresAt: null, deadline: null, botAt: null, now })).toBe(null);
   });
 
   test("plays a due bot move before a due clock, and waits when nothing is due", () => {
-    expect(alarmTask({ sockets: 1, deadline: now, botAt: now, now })).toBe("bot");
-    expect(alarmTask({ sockets: 1, deadline: now, botAt: now + 1000, now })).toBe("clock");
-    expect(alarmTask({ sockets: 1, deadline: now + 5000, botAt: now + 1000, now })).toBe("wait");
+    expect(alarmTask({ sockets: 1, expiresAt: null, deadline: now, botAt: now, now })).toBe("bot");
+    expect(alarmTask({ sockets: 1, expiresAt: null, deadline: now, botAt: now + 1000, now })).toBe("clock");
+    expect(alarmTask({ sockets: 1, expiresAt: null, deadline: now + 5000, botAt: now + 1000, now })).toBe("wait");
   });
 
   test("a pending bot move keeps its time so other activity can't hold it back", () => {

@@ -21,7 +21,7 @@ import {
 } from "../shared/game.ts";
 import { gameId, gameRecord } from "../shared/leaderboard.ts";
 import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage, TOKEN_PATTERN } from "../shared/protocol.ts";
-import { alarmTask, nextAlarm, nextBotAt } from "./alarm.ts";
+import { alarmTask, EXPIRE_MS, nextAlarm, nextBotAt } from "./alarm.ts";
 import { leaderboardKey } from "./leaderboardStore.ts";
 import { MessageBudget } from "./rateLimit.ts";
 import { ReactionRelay } from "./reactions.ts";
@@ -52,6 +52,7 @@ export class Table extends DurableObject<Env> {
   /** What the current deadline is waiting for; a new value restarts the clock. */
   private waitingOn = "";
   private botAt: number | null = null;
+  private expiresAt: number | null = null;
   private reportedOpen: boolean | null = null;
   private recordedGameId = "";
   /** When the current game ended; a late retry must still report this time. */
@@ -70,6 +71,7 @@ export class Table extends DurableObject<Env> {
       this.room = (await ctx.storage.get<string>("room")) ?? "";
       this.waitingOn = (await ctx.storage.get<string>("waitingOn")) ?? "";
       this.botAt = (await ctx.storage.get<number | null>("botAt")) ?? null;
+      this.expiresAt = (await ctx.storage.get<number | null>("expiresAt")) ?? null;
       this.recordedGameId = (await ctx.storage.get<string>("recordedGameId")) ?? "";
       this.endedAt = (await ctx.storage.get<number | null>("endedAt")) ?? null;
     });
@@ -125,7 +127,6 @@ export class Table extends DurableObject<Env> {
           if (!seated && this.game.phase === "lobby" && seatFree) {
             att.playerId = crypto.randomUUID();
             this.tokens[att.token] = att.playerId;
-            await this.ctx.storage.put("tokens", this.tokens);
           }
           // Seat the socket first so the new player counts as present in this same commit.
           this.setAttachment(att);
@@ -140,7 +141,6 @@ export class Table extends DurableObject<Env> {
           att.playerId = null;
           this.setAttachment(att);
           delete this.tokens[att.token];
-          await this.ctx.storage.put("tokens", this.tokens);
           return await this.commit((g) => removePlayer(g, id));
         }
         case "diceHold": {
@@ -192,22 +192,25 @@ export class Table extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const task = alarmTask({
       sockets: this.sockets().length,
+      expiresAt: this.expiresAt,
       deadline: this.game.phase === "playing" ? this.game.deadline : null,
       botAt: this.botAt,
       now: Date.now(),
     });
     switch (task) {
       case "expire":
-        await this.ctx.storage.deleteAll();
-        await this.report(false);
-        this.game = createGame();
-        this.tokens = {};
-        this.room = "";
-        this.waitingOn = "";
-        this.botAt = null;
-        this.recordedGameId = "";
-        this.endedAt = null;
-        return;
+        return await this.ctx.blockConcurrencyWhile(async () => {
+          await this.ctx.storage.deleteAll();
+          await this.report(false);
+          this.game = createGame();
+          this.tokens = {};
+          this.room = "";
+          this.waitingOn = "";
+          this.botAt = null;
+          this.expiresAt = null;
+          this.recordedGameId = "";
+          this.endedAt = null;
+        });
       case "bot":
         return await this.playBot();
       case "clock":
@@ -261,13 +264,19 @@ export class Table extends DurableObject<Env> {
     syncPresence(draft, present);
     change(draft);
     syncPresence(draft, present);
+    if (this.game.phase === "ended" && draft.phase !== "ended" && !(await this.recordResult())) {
+      throw new GameError("No se pudo guardar el resultado. Intenta la revancha de nuevo en un momento.");
+    }
     if (draft.phase === "ended" && this.game.phase !== "ended") this.endedAt = Date.now();
     this.game = draft;
+    const seated = new Set(draft.players.map((p) => p.id));
+    this.tokens = Object.fromEntries(Object.entries(this.tokens).filter(([, id]) => seated.has(id)));
 
     this.updateDeadline();
     this.botAt = nextBotAt(botMove(this.game) !== null, this.botAt, Date.now());
     await this.ctx.storage.put({
       game: this.game,
+      tokens: this.tokens,
       waitingOn: this.waitingOn,
       botAt: this.botAt,
       endedAt: this.endedAt,
@@ -277,7 +286,8 @@ export class Table extends DurableObject<Env> {
     await this.recordResult();
     this.broadcast(sockets);
     const someoneWatching = present.size > 0;
-    await this.report(this.game.phase === "lobby" && someoneWatching && this.game.players.length < MAX_PLAYERS);
+    const seatFree = this.game.players.length < MAX_PLAYERS || this.game.players.some((p) => !p.connected);
+    await this.report(this.game.phase === "lobby" && someoneWatching && seatFree);
   }
 
   /**
@@ -301,12 +311,20 @@ export class Table extends DurableObject<Env> {
   }
 
   private async schedule(closing?: WebSocket): Promise<void> {
+    const sockets = this.sockets(closing).length;
+    const now = Date.now();
+    const expiresAt = sockets === 0 ? (this.expiresAt ?? now + EXPIRE_MS) : null;
+    if (expiresAt !== this.expiresAt) {
+      this.expiresAt = expiresAt;
+      await this.ctx.storage.put("expiresAt", expiresAt);
+    }
     const players = this.game.players.filter((p) => p.connected).length;
     const at = nextAlarm({
-      sockets: this.sockets(closing).length,
+      sockets,
+      expiresAt,
       deadline: players > 0 ? this.game.deadline : null,
       botAt: this.botAt,
-      now: Date.now(),
+      now,
     });
     if (at === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(at);
@@ -335,23 +353,25 @@ export class Table extends DurableObject<Env> {
   }
 
   /** Hands a finished game to the leaderboard once; a failure is retried on the next commit. */
-  private async recordResult(): Promise<void> {
+  private async recordResult(): Promise<boolean> {
     const g = this.game;
-    if (g.phase !== "ended" || g.startedAt === null || gameId(this.room, g.startedAt) === this.recordedGameId) return;
+    if (g.phase !== "ended" || g.startedAt === null || gameId(this.room, g.startedAt) === this.recordedGameId)
+      return true;
     try {
       const seated = Object.entries(this.tokens).filter(([, id]) => findPlayer(g, id));
       const keys = Object.fromEntries(
         await Promise.all(seated.map(async ([token, id]) => [id, await leaderboardKey(token)] as const)),
       );
       const record = gameRecord(g, this.room, keys, this.endedAt ?? Date.now());
-      if (!record) return;
+      if (!record) return true;
       await this.env.LEADERBOARD.get(this.env.LEADERBOARD.idFromName("main")).record(record);
     } catch (error) {
       console.error("Could not record the game for the leaderboard:", error);
-      return;
+      return false;
     }
     this.recordedGameId = gameId(this.room, g.startedAt);
     await this.ctx.storage.put("recordedGameId", this.recordedGameId);
+    return true;
   }
 
   /** Tells the lobby whether newcomers can sit here. Open tables re-report so the lobby keeps them fresh. */
