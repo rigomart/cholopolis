@@ -341,6 +341,25 @@ describe("debts and bankruptcy", () => {
     expect(p(g, "b").bankrupt).toBe(true);
     expect(g.turn?.playerId).toBe("a");
   });
+
+  test("timing out multiple debtors stops when the last player wins", () => {
+    const g = playing(3);
+    p(g, "b").cash = 0;
+    p(g, "c").cash = 0;
+    g.decks.caja = [CARDS.caja.findIndex((c) => c.text.includes("cumpleaños"))];
+    run(g, "a", { type: "roll" }, dice(1, 1));
+    expect(debtsOf(p(g, "b"))).toEqual([{ to: "a", amount: 10 }]);
+    expect(debtsOf(p(g, "c"))).toEqual([{ to: "a", amount: 10 }]);
+    run(g, "a", { type: "bankrupt" });
+
+    autoPlay(g, dice());
+
+    expect(g.phase).toBe("ended");
+    expect(g.turn).toBeNull();
+    expect(g.winnerId).toBe("c");
+    expect(p(g, "c").bankrupt).toBe(false);
+    expect(g.players.filter((player) => !player.bankrupt).map((player) => player.id)).toEqual(["c"]);
+  });
 });
 
 describe("unpaid debts are not money", () => {
