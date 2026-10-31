@@ -11,6 +11,7 @@ import {
   buildError,
   canDragDice,
   createGame,
+  debtsOf,
   type GameState,
   GameError,
   type Player,
@@ -300,7 +301,7 @@ describe("debts and bankruptcy", () => {
   test("an unpayable rent leaves the payer negative and blocks the turn", () => {
     const g = inDebt();
     expect(p(g, "a").cash).toBe(100 - 2000);
-    expect(p(g, "a").creditor).toBe("b");
+    expect(debtsOf(p(g, "a"))).toEqual([{ to: "b", amount: 1900 }]);
     expect(() => run(g, "a", { type: "endTurn" })).toThrow("saldar");
   });
 
@@ -335,6 +336,135 @@ describe("debts and bankruptcy", () => {
     autoPlay(g, dice());
     expect(p(g, "b").bankrupt).toBe(true);
     expect(g.turn?.playerId).toBe("a");
+  });
+});
+
+describe("unpaid debts are not money", () => {
+  test("bankruptcy leaves the creditor only what the debtor really had", () => {
+    const g = inDebt();
+    run(g, "a", { type: "bankrupt" });
+    expect(p(g, "b").cash).toBe(STARTING_CASH + 100);
+  });
+
+  test("a card payer who runs out midway owes each player only what was left unpaid", () => {
+    const g = playing(4);
+    own(g, "a", 1);
+    const junta = CARDS.suerte.findIndex((c) => c.text.includes("junta de vecinos"));
+    g.decks.suerte = [junta];
+    Object.assign(p(g, "a"), { position: 0, cash: 20 });
+    run(g, "a", { type: "roll" }, dice(3, 4));
+    expect(p(g, "a").cash).toBe(20 - 150);
+    run(g, "a", { type: "bankrupt" });
+    expect(p(g, "b").cash).toBe(STARTING_CASH + 20);
+    expect(p(g, "c").cash).toBe(STARTING_CASH);
+    expect(p(g, "d").cash).toBe(STARTING_CASH);
+    expect(g.props[1]?.owner).toBe("c");
+  });
+
+  test("cash raised after a debt clears the oldest debts first", () => {
+    const g = playing(4);
+    own(g, "a", 1);
+    const junta = CARDS.suerte.findIndex((c) => c.text.includes("junta de vecinos"));
+    g.decks.suerte = [junta];
+    Object.assign(p(g, "a"), { position: 0, cash: 20 });
+    run(g, "a", { type: "roll" }, dice(3, 4));
+    p(g, "a").cash = -30;
+    run(g, "a", { type: "bankrupt" });
+    expect(p(g, "b").cash).toBe(STARTING_CASH + 50);
+    expect(p(g, "c").cash).toBe(STARTING_CASH + 50);
+    expect(p(g, "d").cash).toBe(STARTING_CASH + 20);
+    expect(g.props[1]?.owner).toBe("d");
+  });
+
+  test("a creditor cannot spend the part of a payment the debtor never had", () => {
+    const g = inDebt();
+    const give = { squares: [], cash: STARTING_CASH + 101, jailCards: 0 };
+    const none = { squares: [], cash: 0, jailCards: 0 };
+    expect(() => run(g, "b", { type: "proposeTrade", to: "c", give, get: none })).toThrow("no tiene");
+    run(g, "b", { type: "proposeTrade", to: "c", give: { ...give, cash: STARTING_CASH + 100 }, get: none });
+  });
+
+  test("a debt to the bank sends the properties back to the market", () => {
+    const g = playing(3);
+    own(g, "a", 1);
+    Object.assign(p(g, "a"), { position: 0, cash: 50 });
+    run(g, "a", { type: "roll" }, dice(2, 2));
+    expect(p(g, "a").cash).toBeLessThan(0);
+    run(g, "a", { type: "bankrupt" });
+    expect(g.props[1]?.owner).toBeNull();
+  });
+});
+
+test("a game saved before debts were tracked per creditor keeps who it owed", () => {
+  const g = playing(3);
+  p(g, "a").cash = -50;
+  const saved = structuredClone(g) as unknown as { players: Record<string, unknown>[] };
+  const old = saved.players[0] as Record<string, unknown>;
+  Object.assign(old, { creditor: "c" });
+  delete old.debts;
+  delete old.idleTurns;
+  const restored = restoreGame(saved as unknown as GameState);
+  expect(debtsOf(p(restored, "a"))).toEqual([{ to: "c", amount: 50 }]);
+  expect(p(restored, "a").idleTurns).toBe(0);
+});
+
+/** Lets `a` time out through one whole turn while the others stay connected. */
+function timeOutTurn(g: GameState) {
+  g.turn = { playerId: "a", stage: "roll", doubles: 0, rolledDoubles: false };
+  for (let i = 0; i < 20 && g.turn?.playerId === "a" && !p(g, "a").bankrupt; i++) autoPlay(g, dice(1, 2, 1, 2));
+}
+
+describe("disconnected players", () => {
+  test("three timed-out turns away forfeit the seat to the bank", () => {
+    const g = playing(3);
+    own(g, "a", 39);
+    syncPresence(g, new Set(["b", "c"]));
+    timeOutTurn(g);
+    timeOutTurn(g);
+    expect(p(g, "a").bankrupt).toBe(false);
+    timeOutTurn(g);
+    expect(p(g, "a").bankrupt).toBe(true);
+    expect(g.props[39]?.owner).toBeNull();
+    expect(g.log.at(-1)?.text ?? "").not.toBe("");
+    expect(g.turn?.playerId).not.toBe("a");
+  });
+
+  test("the table does not play the turn of a seat it is giving up", () => {
+    const g = playing(3);
+    syncPresence(g, new Set(["b", "c"]));
+    timeOutTurn(g);
+    timeOutTurn(g);
+    g.turn = { playerId: "a", stage: "roll", doubles: 0, rolledDoubles: false };
+    const rollId = g.rollId;
+    autoPlay(g, dice(1, 2));
+    expect(p(g, "a").bankrupt).toBe(true);
+    expect(g.rollId).toBe(rollId);
+  });
+
+  test("coming back resets the count", () => {
+    const g = playing(3);
+    syncPresence(g, new Set(["b", "c"]));
+    timeOutTurn(g);
+    timeOutTurn(g);
+    syncPresence(g, new Set(["a", "b", "c"]));
+    syncPresence(g, new Set(["b", "c"]));
+    timeOutTurn(g);
+    timeOutTurn(g);
+    expect(p(g, "a").bankrupt).toBe(false);
+  });
+
+  test("a connected player who keeps timing out stays in", () => {
+    const g = playing(3);
+    for (let i = 0; i < 5; i++) timeOutTurn(g);
+    expect(p(g, "a").bankrupt).toBe(false);
+  });
+
+  test("the last player left after a forfeit wins", () => {
+    const g = playing(2);
+    syncPresence(g, new Set(["b"]));
+    for (let i = 0; i < 3; i++) timeOutTurn(g);
+    expect(g.phase).toBe("ended");
+    expect(g.winnerId).toBe("b");
   });
 });
 

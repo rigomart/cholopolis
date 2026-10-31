@@ -95,13 +95,14 @@ describe("flowsBetween", () => {
     expect(flows(g, "b", { type: "acceptTrade", trade: id })).toEqual([{ from: "a", to: "b", amount: 100 }]);
   });
 
-  test("going bankrupt in debt moves nothing, but the heir's building refund comes from the debtor", () => {
+  test("going bankrupt in debt returns the unpaid part to the bank, and the heir's building refund comes from the debtor", () => {
     const g = playing(3);
     own(g, "a", 1, 3);
     const street = g.props[3];
     if (street) street.houses = 2;
-    Object.assign(p(g, "a"), { cash: -50, creditor: "b" });
-    expect(flows(g, "a", { type: "bankrupt" })).toEqual([{ from: "a", to: "b", amount: 50 }]);
+    Object.assign(p(g, "a"), { cash: -20, debts: [{ to: "b", amount: 20 }] });
+    p(g, "b").cash += 20;
+    expect(flows(g, "a", { type: "bankrupt" })).toEqual([{ from: "a", to: "b", amount: 30 }]);
   });
 
   test("states released together are diffed pair by pair, so a wiped debt invents no payment", () => {
@@ -113,7 +114,10 @@ describe("flowsBetween", () => {
     const rolled: PublicState = structuredClone(toPublic(g));
     act(g, "a", { type: "bankrupt" }, dice());
     const broke = toPublic(g);
-    expect(flowsAlong([start, rolled, broke])).toEqual([{ from: "a", to: "b", amount: 4 }]);
+    expect(flowsAlong([start, rolled, broke])).toEqual([
+      { from: "a", to: "b", amount: 4 },
+      { from: "b", to: null, amount: 3 },
+    ]);
     expect(flowsBetween(start, broke)).toContainEqual({ from: null, to: "a", amount: 3 });
   });
 

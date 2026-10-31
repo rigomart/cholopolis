@@ -1,4 +1,4 @@
-import { findPlayer, type Player, type PublicState } from "../../../shared/game.ts";
+import { findPlayer, mainCreditor, type Player, type PublicState } from "../../../shared/game.ts";
 
 /** Money that changed hands; a null end is the bank. */
 export interface Flow {
@@ -55,8 +55,9 @@ export function flowsBetween(prev: PublicState, next: PublicState): Flow[] {
 
   for (const p of next.players) {
     const before = findPlayer(prev, p.id);
-    if (!p.bankrupt || before?.bankrupt !== false || !before.creditor) continue;
-    const heir = findPlayer(next, before.creditor);
+    const creditor = before ? mainCreditor(before) : null;
+    if (!p.bankrupt || before?.bankrupt !== false || !creditor) continue;
+    const heir = findPlayer(next, creditor);
     const gain = heir ? (unexplained.get(heir.id) ?? 0) : 0;
     if (heir && gain > 0) move(p.id, heir.id, gain);
   }
