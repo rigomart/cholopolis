@@ -59,5 +59,10 @@ Run `bun run types` after changing `wrangler.jsonc`.
 
 ## Deploy
 
-`bun run deploy` checks, builds and runs `wrangler deploy`. The Worker is served on the
-`cholopolis.rigos.dev` custom domain.
+Merging to `main` deploys. `.github/workflows/deploy.yml` runs the same checks as CI on
+pull requests, runs `wrangler deploy`, and then smoke tests `cholopolis.rigos.dev` against
+the build. It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository
+secrets. Games live in Durable Object storage, so they survive a deploy; open sockets drop
+and clients reconnect. Roll back with `bunx wrangler rollback`.
+
+`bun run deploy` does the same check, build and deploy from your machine.
