@@ -88,3 +88,8 @@ export function playChime(): void {
   tone(0, 784, 0.18, 0.35, "triangle");
   tone(0.12, 1175, 0.16, 0.5, "triangle");
 }
+
+export function playReaction(): void {
+  tone(0, 620, 0.05, 0.09, "sine");
+  tone(0.05, 880, 0.04, 0.12, "sine");
+}

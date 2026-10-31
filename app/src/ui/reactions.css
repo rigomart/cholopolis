@@ -1,0 +1,138 @@
+.reaction-toggle[aria-expanded="true"] {
+  color: var(--yellow);
+}
+
+.reaction-row {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.toolbar .reaction-row {
+  flex-basis: 100%;
+  order: 99;
+}
+
+.reaction-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.reaction-button[aria-disabled="true"] {
+  opacity: 0.4;
+}
+
+.reaction-bubble {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 99px;
+  background: var(--text);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px -4px #000a;
+  animation: reaction-life 2.5s ease-out both;
+  pointer-events: none;
+}
+
+@keyframes reaction-life {
+  0% {
+    opacity: 0;
+    scale: 0.5;
+  }
+  8% {
+    opacity: 1;
+    scale: 1.15;
+  }
+  14% {
+    scale: 1;
+  }
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.player .reaction-bubble {
+  position: absolute;
+  left: calc(100% + 0.5rem);
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.player .reaction-bubble::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  translate: 0 -50%;
+  border: 5px solid transparent;
+  border-left: 0;
+  border-right-color: var(--text);
+}
+
+.roster li .reaction-bubble {
+  flex: none;
+}
+
+.pawn-bubbles {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pawn-bubble-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.pawn-bubble {
+  translate: -50% -100%;
+  font-size: 1.2rem;
+  padding: 0.2rem 0.65rem;
+}
+
+.pawn-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  translate: -50% 0;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: var(--text);
+}
+
+.players .player {
+  position: relative;
+}
+
+@media (max-width: 900px) {
+  .player .reaction-bubble {
+    position: static;
+    translate: none;
+    grid-column: 2 / span 2;
+    justify-self: start;
+    margin-top: 0.2rem;
+  }
+
+  .player .reaction-bubble::before {
+    display: none;
+  }
+}

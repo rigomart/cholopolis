@@ -24,6 +24,7 @@ import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
 import { Confetti } from "./Confetti.tsx";
 import { Pips } from "./Pips.tsx";
 import { Properties } from "./Properties.tsx";
+import { ReactionBadge, ReactionTray } from "./Reactions.tsx";
 import { RollButton } from "./RollButton.tsx";
 import { TradeComposer, TradeOffers } from "./Trades.tsx";
 import { GameClock, TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./TurnClock.tsx";
@@ -75,6 +76,7 @@ export function Hud({
         settled={balances.state}
         list={playerList}
         now={serverNow}
+        bubbles={table.reactions.bubbles}
       />
       <MoneyFlows batches={balances.batches} list={playerList} />
       <Log entries={state.log} />
@@ -118,6 +120,7 @@ export function Hud({
               </button>
             </>
           )}
+          <ReactionTray table={table} />
           <button
             type="button"
             class="link"
@@ -181,6 +184,7 @@ function Players({
   settled,
   list,
   now,
+  bubbles,
 }: {
   state: PublicState;
   you: string | null;
@@ -188,6 +192,7 @@ function Players({
   settled: PublicState;
   list: RefObject<HTMLOListElement | null>;
   now: () => number;
+  bubbles: Table["reactions"]["bubbles"];
 }) {
   const turnId = state.turn?.playerId;
 
@@ -210,6 +215,7 @@ function Players({
             </span>
             <RollingCash id={p.id} cash={cash} />
             <Pips state={state} playerId={p.id} />
+            <ReactionBadge bubble={bubbles[p.id]} name={p.name} />
             <span class="player-notes">
               {p.bankrupt && "en quiebra"}
               {p.inJail && "en el Penal"}

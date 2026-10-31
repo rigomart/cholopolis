@@ -84,6 +84,8 @@ function skipsAhead(previous: PublicState, next: PublicState): boolean {
   return last !== undefined && !next.log.some((e) => e.id === last);
 }
 
+const PIECE_LABEL_HEIGHT = 0.95;
+
 function crowdScale(count: number): number {
   return count > 4 ? 0.7 : count > 2 ? 0.85 : 1;
 }
@@ -300,6 +302,18 @@ export class BoardScene {
   }
 
   // ---------------------------------------------------------------- pieces
+
+  /** Where a player's piece is on screen (CSS pixels from the board's top left), or null when it is off screen or gone. */
+  pieceScreenPosition(playerId: string): { x: number; y: number } | null {
+    const view = this.pieces.get(playerId);
+    if (!view || view.leaving) return null;
+    const { clientWidth: w, clientHeight: h } = this.container;
+    const p = view.mesh.position.clone();
+    p.y += PIECE_LABEL_HEIGHT * view.mesh.scale.y;
+    p.project(this.camera);
+    if (p.z > 1 || Math.abs(p.x) > 1.2 || Math.abs(p.y) > 1.2) return null;
+    return { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h };
+  }
 
   private syncPieces(state: PublicState | null, snap: boolean): void {
     const players = state ? state.players.filter((p) => !p.bankrupt) : [];

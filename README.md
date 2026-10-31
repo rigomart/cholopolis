@@ -59,6 +59,12 @@ Classic Monopoly with these choices:
   The thrower's client sends how both dice left the hand with the roll; the table validates
   it and rolls the values itself. Every client replays the same throw from that, and turns
   each die model so the rolled value ends on top.
+- Seated players can send quick reactions (¡Habla!, 😂, 💸, 😤, 👏, 🙏) from the lobby or the
+  toolbar's "Reaccionar" button. They are a fixed list in `shared/reactions.ts`, sent as ids and
+  never free text. The table only relays them, to the other sockets: nothing is saved, one per
+  player every 2 seconds, the rest dropped. Each shows for 2.5 seconds as a bubble over the
+  sender's piece and beside their name in the player list, so it also reaches players without
+  WebGL. They play a soft sound unless muted, and clients skip message types they don't know.
 - Players are anonymous. A random token in localStorage maps a browser to its seat, so a
   reload or dropped connection puts you back where you were.
 
