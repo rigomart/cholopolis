@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import type { PublicState } from "../../shared/game.ts";
-import type { ClientMessage, ServerMessage } from "../../shared/protocol.ts";
+import { type ClientMessage, parseServerMessage, type ServerMessage } from "../../shared/protocol.ts";
+import type { ReactionId } from "../../shared/reactions.ts";
 import { browserToken } from "./session.ts";
+import { type Bubbles, useReactions } from "./useReactions.ts";
 
 export type Status = "connecting" | "open" | "reconnecting";
 
@@ -15,6 +17,7 @@ export interface Table {
   error: { id: number; message: string } | null;
   diceHold: (Extract<ServerMessage, { type: "diceHold" }> & { id: number }) | null;
   send: (msg: ClientMessage) => void;
+  reactions: { bubbles: Bubbles; cooling: boolean; react: (reaction: ReactionId) => void };
   /** The server's clock, as best this tab can tell; compare `state.deadline` against this. */
   serverNow: () => number;
 }
@@ -31,6 +34,13 @@ export function useTable(room: string, name: string): Table {
   const [diceHold, setDiceHold] = useState<Table["diceHold"]>(null);
   const socket = useRef<WebSocket | null>(null);
   const skew = useRef(0);
+  const sendReaction = useCallback((reaction: ReactionId) => {
+    const ws = socket.current;
+    if (ws?.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "reaction", reaction } satisfies ClientMessage));
+    return true;
+  }, []);
+  const { bubbles, cooling, show, react } = useReactions(you, sendReaction);
 
   useEffect(() => {
     let stopped = false;
@@ -43,7 +53,7 @@ export function useTable(room: string, name: string): Table {
       // guess. Start over on every connection in case this machine's clock was changed meanwhile.
       let bestSkew = -Infinity;
       const scheme = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${scheme}://${location.host}/ws/${room}?token=${browserToken()}`);
+      const ws = new WebSocket(`${scheme}://${location.host}/ws/${room}?token=${browserToken()}&reactions=1`);
       socket.current = ws;
       ws.addEventListener("open", () => {
         attempt = 0;
@@ -53,7 +63,8 @@ export function useTable(room: string, name: string): Table {
       });
       ws.addEventListener("message", (event) => {
         if (event.data === "pong") return;
-        const msg = JSON.parse(String(event.data)) as ServerMessage;
+        const msg = parseServerMessage(String(event.data));
+        if (!msg) return;
         if (msg.type === "state") {
           // An older server omits `now`; keep the last estimate.
           if (Number.isFinite(msg.now)) {
@@ -65,6 +76,8 @@ export function useTable(room: string, name: string): Table {
           setSpectators(msg.spectators);
         } else if (msg.type === "diceHold") {
           setDiceHold({ ...msg, id: Date.now() });
+        } else if (msg.type === "reaction") {
+          show(msg.playerId, msg.reaction);
         } else {
           setError({ id: Date.now(), message: msg.message });
         }
@@ -85,7 +98,7 @@ export function useTable(room: string, name: string): Table {
       socket.current?.close();
       socket.current = null;
     };
-  }, [room, name]);
+  }, [room, name, show]);
 
   const send = useCallback((msg: ClientMessage) => {
     const ws = socket.current;
@@ -95,5 +108,16 @@ export function useTable(room: string, name: string): Table {
 
   const serverNow = useCallback(() => Date.now() + skew.current, []);
 
-  return { name, status, state, you, spectators, error, diceHold, send, serverNow };
+  return {
+    name,
+    status,
+    state,
+    you,
+    spectators,
+    error,
+    diceHold,
+    send,
+    reactions: { bubbles, cooling, react },
+    serverNow,
+  };
 }

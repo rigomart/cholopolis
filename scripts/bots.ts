@@ -28,6 +28,7 @@ for (let n = 0; n < count; n++) {
       if (event.data === "pong") return;
       const msg = JSON.parse(String(event.data)) as ServerMessage;
       if (msg.type === "error") return console.log(`[${names[n]}] error: ${msg.message}`);
+      if (msg.type !== "state") return;
       const { state, you } = msg;
       if (!you) return;
       if (autoStart && state.phase === "lobby" && state.hostId === you && state.players.length >= count) {

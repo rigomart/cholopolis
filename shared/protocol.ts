@@ -1,12 +1,14 @@
 import { type DiceHold, parseDiceHold, parseDiceToss } from "./dice.ts";
 import type { Action, PublicState, TradeSide } from "./game.ts";
 import { PIECES } from "./pieces.ts";
+import { isReactionId, type ReactionId } from "./reactions.ts";
 
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "leave" }
   | { type: "action"; action: Action }
   | { type: "diceHold"; rollId: number; hold: DiceHold | null }
+  | { type: "reaction"; reaction: ReactionId }
   /** Sent only by tabs still running an older client; ignored without a reply. */
   | { type: "outdated" };
 
@@ -20,7 +22,8 @@ export type ServerMessage =
       now: number;
     }
   | { type: "error"; message: string }
-  | { type: "diceHold"; playerId: string; rollId: number; hold: DiceHold | null };
+  | { type: "diceHold"; playerId: string; rollId: number; hold: DiceHold | null }
+  | { type: "reaction"; playerId: string; reaction: ReactionId };
 
 export const ROOM_PATTERN = /^[a-z0-9]{6,12}$/;
 export const MAX_MESSAGE_BYTES = 4096;
@@ -105,6 +108,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     if (v.hold !== null && !hold) return null;
     return { type: "diceHold", rollId: v.rollId, hold };
   }
+  if (v.type === "reaction" && isReactionId(v.reaction)) return { type: "reaction", reaction: v.reaction };
   // The hold message before `diceHold`, in a shape this table no longer relays.
   if (v.type === "diceDrag") return { type: "outdated" };
   if (v.type === "action") {
@@ -112,4 +116,32 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return action ? { type: "action", action } : null;
   }
   return null;
+}
+
+/**
+ * Reads a message from the table. Types this client doesn't know (sent by a newer server) come
+ * back as null so the caller can skip them instead of treating them as errors.
+ */
+export function parseServerMessage(raw: string): ServerMessage | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isObject(v)) return null;
+  switch (v.type) {
+    case "state":
+      return isObject(v.state) ? (v as unknown as ServerMessage) : null;
+    case "diceHold":
+      return typeof v.playerId === "string" ? (v as unknown as ServerMessage) : null;
+    case "error":
+      return typeof v.message === "string" ? { type: "error", message: v.message } : null;
+    case "reaction":
+      return typeof v.playerId === "string" && isReactionId(v.reaction)
+        ? { type: "reaction", playerId: v.playerId, reaction: v.reaction }
+        : null;
+    default:
+      return null;
+  }
 }

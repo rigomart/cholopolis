@@ -22,11 +22,14 @@ import {
 import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage } from "../shared/protocol.ts";
 import { alarmTask, nextAlarm, nextBotAt } from "./alarm.ts";
 import { MessageBudget } from "./rateLimit.ts";
+import { ReactionRelay } from "./reactions.ts";
 
 interface Attachment {
   token: string;
   playerId: string | null;
   name: string | null;
+  /** Tabs from before reactions would read the message as an error, so only these get it. */
+  reactions?: boolean;
 }
 
 const RATE_LIMIT = 20;
@@ -51,6 +54,7 @@ export class Table extends DurableObject<Env> {
   private reportedOpen: boolean | null = null;
   private readonly actions = new MessageBudget(RATE_LIMIT, RATE_WINDOW_MS);
   private readonly drags = new MessageBudget(80, RATE_WINDOW_MS);
+  private readonly reactions = new ReactionRelay();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -86,6 +90,7 @@ export class Table extends DurableObject<Env> {
       token,
       playerId: findPlayer(this.game, known) ? (known ?? null) : null,
       name: null,
+      reactions: url.searchParams.get("reactions") === "1",
     };
     server.serializeAttachment(attachment);
     await this.commit(() => {});
@@ -96,7 +101,7 @@ export class Table extends DurableObject<Env> {
     if (typeof raw !== "string" || raw.length > MAX_MESSAGE_BYTES) return;
     const msg = parseClientMessage(raw);
     if (msg?.type === "outdated") return;
-    if (msg?.type === "diceHold") {
+    if (msg?.type === "diceHold" || msg?.type === "reaction") {
       if (!this.drags.allows(ws)) return;
     } else if (!this.actions.allows(ws)) {
       return this.send(ws, { type: "error", message: "Más despacio, por favor." });
@@ -141,6 +146,14 @@ export class Table extends DurableObject<Env> {
               rollId: msg.rollId,
               hold: msg.hold,
             });
+          }
+          return;
+        }
+        case "reaction": {
+          const relayed = this.reactions.accept(this.game.players, att.playerId, msg.reaction);
+          if (!relayed) return;
+          for (const other of this.sockets(ws)) {
+            if ((other.deserializeAttachment() as Attachment).reactions) this.send(other, relayed);
           }
           return;
         }

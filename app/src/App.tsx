@@ -8,6 +8,7 @@ import { Deed } from "./ui/Deed.tsx";
 import { Hud } from "./ui/Hud.tsx";
 import { Lobby } from "./ui/Lobby.tsx";
 import { NameGate } from "./ui/NameGate.tsx";
+import { PawnBubbles } from "./ui/Reactions.tsx";
 import { useTable } from "./useTable.ts";
 
 /** How long a throw may wait for the server before the dice go back. */
@@ -217,6 +218,9 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           rolling={rolling || status !== "open" || shaking === you}
           diceLanded={diceLanded}
         />
+      )}
+      {state && state.phase !== "lobby" && scene && (
+        <PawnBubbles state={state} scene={scene} bubbles={table.reactions.bubbles} />
       )}
       {state && inspect !== null && <Deed state={state} index={inspect} onClose={() => setInspect(null)} />}
       {status === "reconnecting" && <p class="banner">Se cortó la conexión. Reconectando…</p>}

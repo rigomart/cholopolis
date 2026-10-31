@@ -5,6 +5,7 @@ import { findPlayer, TIME_LIMITS } from "../../../shared/game.ts";
 import { PIECES } from "../../../shared/pieces.ts";
 import type { Table } from "../useTable.ts";
 import { Pawn, Wordmark } from "./bits.tsx";
+import { ReactionBadge, ReactionTray } from "./Reactions.tsx";
 
 interface Props {
   table: Table;
@@ -54,6 +55,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
                 {p.name}
                 {p.id === you && <span class="muted"> (tú)</span>}
               </span>
+              <ReactionBadge bubble={table.reactions.bubbles[p.id]} name={p.name} />
               {p.id === state.hostId && <span class="tag">abre la partida</span>}
               {p.bot && <span class="tag">bot</span>}
               {!p.connected && <span class="muted">desconectado</span>}
@@ -99,6 +101,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
             })}
           </fieldset>
         )}
+        {me && <ReactionTray table={table} open />}
 
         <fieldset class="lengths">
           <legend>Duración</legend>
