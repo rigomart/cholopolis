@@ -217,7 +217,9 @@ export class BoardScene {
     canvas.addEventListener("pointerup", (e) => {
       if (!this.dice.pointerUp(e)) this.pick(e);
     });
-    canvas.addEventListener("pointercancel", () => this.dice.cancel());
+    canvas.addEventListener("pointercancel", () => {
+      if (this.dice.held) this.dice.cancel();
+    });
     canvas.addEventListener("lostpointercapture", () => {
       if (this.dice.held) this.dice.cancel();
     });
@@ -505,7 +507,8 @@ export class BoardScene {
   }
 
   private resize(): void {
-    this.dice.cancel();
+    // A throw already on its way keeps flying.
+    if (this.dice.held) this.dice.cancel();
     const { clientWidth: w, clientHeight: h } = this.container;
     if (!w || !h) return;
     this.renderer.setSize(w, h);

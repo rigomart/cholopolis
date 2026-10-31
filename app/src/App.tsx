@@ -167,7 +167,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
 
   useEffect(() => {
     if (!rolling) return;
-    // The dice wait in the air for the server's values; never forever.
+    // A throw hovers mid-flight until the server's values arrive; never forever.
     const id = setTimeout(() => {
       scene?.cancelDice();
       setRolling(false);
