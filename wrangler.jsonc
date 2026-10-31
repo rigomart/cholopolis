@@ -1,5 +1,6 @@
 // One Worker serves the built client from dist/ and runs the game:
-// each table is a Table Durable Object, and a single Lobby Durable Object tracks open tables.
+// each table is a Table Durable Object, a single Lobby Durable Object tracks open tables,
+// and a single Leaderboard Durable Object keeps finished games for the ranking.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "cholopolis",
@@ -15,9 +16,13 @@
     "bindings": [
       { "name": "TABLE", "class_name": "Table" },
       { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "LEADERBOARD", "class_name": "Leaderboard" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Table", "Lobby"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Table", "Lobby"] },
+    { "tag": "v2", "new_sqlite_classes": ["Leaderboard"] },
+  ],
   "observability": {
     "enabled": true,
   },

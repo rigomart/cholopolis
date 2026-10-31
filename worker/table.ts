@@ -19,8 +19,10 @@ import {
   syncPresence,
   toPublic,
 } from "../shared/game.ts";
-import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage } from "../shared/protocol.ts";
+import { gameId, gameRecord } from "../shared/leaderboard.ts";
+import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage, TOKEN_PATTERN } from "../shared/protocol.ts";
 import { alarmTask, nextAlarm, nextBotAt } from "./alarm.ts";
+import { leaderboardKey } from "./leaderboardStore.ts";
 import { MessageBudget } from "./rateLimit.ts";
 import { ReactionRelay } from "./reactions.ts";
 
@@ -34,7 +36,6 @@ interface Attachment {
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 5_000;
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
 const rng = () => (crypto.getRandomValues(new Uint32Array(1))[0] ?? 0) / 2 ** 32;
 
@@ -52,6 +53,9 @@ export class Table extends DurableObject<Env> {
   private waitingOn = "";
   private botAt: number | null = null;
   private reportedOpen: boolean | null = null;
+  private recordedGameId = "";
+  /** When the current game ended; a late retry must still report this time. */
+  private endedAt: number | null = null;
   private readonly actions = new MessageBudget(RATE_LIMIT, RATE_WINDOW_MS);
   private readonly drags = new MessageBudget(80, RATE_WINDOW_MS);
   private readonly reactions = new ReactionRelay();
@@ -66,6 +70,8 @@ export class Table extends DurableObject<Env> {
       this.room = (await ctx.storage.get<string>("room")) ?? "";
       this.waitingOn = (await ctx.storage.get<string>("waitingOn")) ?? "";
       this.botAt = (await ctx.storage.get<number | null>("botAt")) ?? null;
+      this.recordedGameId = (await ctx.storage.get<string>("recordedGameId")) ?? "";
+      this.endedAt = (await ctx.storage.get<number | null>("endedAt")) ?? null;
     });
   }
 
@@ -199,6 +205,8 @@ export class Table extends DurableObject<Env> {
         this.room = "";
         this.waitingOn = "";
         this.botAt = null;
+        this.recordedGameId = "";
+        this.endedAt = null;
         return;
       case "bot":
         return await this.playBot();
@@ -253,12 +261,20 @@ export class Table extends DurableObject<Env> {
     syncPresence(draft, present);
     change(draft);
     syncPresence(draft, present);
+    if (draft.phase === "ended" && this.game.phase !== "ended") this.endedAt = Date.now();
     this.game = draft;
 
     this.updateDeadline();
     this.botAt = nextBotAt(botMove(this.game) !== null, this.botAt, Date.now());
-    await this.ctx.storage.put({ game: this.game, waitingOn: this.waitingOn, botAt: this.botAt });
+    await this.ctx.storage.put({
+      game: this.game,
+      waitingOn: this.waitingOn,
+      botAt: this.botAt,
+      endedAt: this.endedAt,
+    });
     await this.schedule(closing);
+    // Before the broadcast, so the end screen already finds the new ranking.
+    await this.recordResult();
     this.broadcast(sockets);
     const someoneWatching = present.size > 0;
     await this.report(this.game.phase === "lobby" && someoneWatching && this.game.players.length < MAX_PLAYERS);
@@ -316,6 +332,26 @@ export class Table extends DurableObject<Env> {
     } catch {
       // The socket closed between listing and sending; its close handler will tidy up.
     }
+  }
+
+  /** Hands a finished game to the leaderboard once; a failure is retried on the next commit. */
+  private async recordResult(): Promise<void> {
+    const g = this.game;
+    if (g.phase !== "ended" || g.startedAt === null || gameId(this.room, g.startedAt) === this.recordedGameId) return;
+    try {
+      const seated = Object.entries(this.tokens).filter(([, id]) => findPlayer(g, id));
+      const keys = Object.fromEntries(
+        await Promise.all(seated.map(async ([token, id]) => [id, await leaderboardKey(token)] as const)),
+      );
+      const record = gameRecord(g, this.room, keys, this.endedAt ?? Date.now());
+      if (!record) return;
+      await this.env.LEADERBOARD.get(this.env.LEADERBOARD.idFromName("main")).record(record);
+    } catch (error) {
+      console.error("Could not record the game for the leaderboard:", error);
+      return;
+    }
+    this.recordedGameId = gameId(this.room, g.startedAt);
+    await this.ctx.storage.put("recordedGameId", this.recordedGameId);
   }
 
   /** Tells the lobby whether newcomers can sit here. Open tables re-report so the lobby keeps them fresh. */

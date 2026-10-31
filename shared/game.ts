@@ -65,6 +65,8 @@ export interface Player {
   /** Decks the held "Sal libre del Penal" cards came from, so they go back to the right one. */
   jailCards: Deck[];
   bankrupt: boolean;
+  /** 1 for the first player of this game to go bankrupt, 2 for the next, and so on. */
+  outOrder?: number;
   /**
    * What was left unpaid, oldest first, when payments pushed cash below zero. Read it with
    * `debtsOf`: only the part still matching a negative balance counts.
@@ -159,6 +161,8 @@ export interface GameState {
   timeLimit: number | null;
   /** Epoch ms; set at start. The game ends at the first turn change after it. */
   endsAt: number | null;
+  /** Epoch ms the game started; with the table's room it names the game for the leaderboard. */
+  startedAt: number | null;
   endedByTime: boolean;
   /** When the current turn times out (epoch ms); set by the server. */
   deadline: number | null;
@@ -216,6 +220,7 @@ export function createGame(): GameState {
     winnerId: null,
     timeLimit: null,
     endsAt: null,
+    startedAt: null,
     endedByTime: false,
     deadline: null,
     nextId: 1,
@@ -232,6 +237,7 @@ export function restoreGame(saved: GameState): GameState {
     players: g.players.map(restorePlayer),
     timeLimit: g.timeLimit ?? null,
     endsAt: g.endsAt ?? null,
+    startedAt: g.startedAt ?? null,
     endedByTime: g.endedByTime ?? false,
   };
 }
@@ -585,8 +591,9 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng, no
   const turn = g.turn;
   const wasLobby = g.phase === "lobby";
   perform(g, playerId, action, rng);
-  if (wasLobby && g.phase === "playing" && g.timeLimit !== null && now !== undefined) {
-    g.endsAt = now + g.timeLimit * MINUTE_MS;
+  if (wasLobby && g.phase === "playing" && now !== undefined) {
+    g.startedAt = now;
+    if (g.timeLimit !== null) g.endsAt = now + g.timeLimit * MINUTE_MS;
   }
   if (g.turn !== turn) endIfTimeUp(g, now);
 }
@@ -697,6 +704,7 @@ function rematch(g: GameState, playerId: string): void {
   const { log: history, nextId, rollId, timeLimit } = g;
   const players = g.players.filter((p) => p.connected);
   for (const p of players) {
+    delete p.outOrder;
     Object.assign(p, {
       position: 0,
       cash: STARTING_CASH,
@@ -1044,6 +1052,7 @@ function goBankrupt(g: GameState, p: Player, toBank = false): void {
   p.jailCards = [];
   p.cash = 0;
   p.debts = [];
+  p.outOrder = g.players.filter((x) => x.bankrupt).length + 1;
   p.bankrupt = true;
   p.inJail = false;
   g.trades = g.trades.filter((t) => t.from !== p.id && t.to !== p.id);

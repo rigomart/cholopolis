@@ -24,6 +24,7 @@ import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
 import { Confetti } from "./Confetti.tsx";
 import { Pips } from "./Pips.tsx";
 import { Properties } from "./Properties.tsx";
+import { GamePoints } from "./Ranking.tsx";
 import { ReactionBadge, ReactionTray } from "./Reactions.tsx";
 import { RollButton } from "./RollButton.tsx";
 import { TradeComposer, TradeOffers } from "./Trades.tsx";
@@ -481,6 +482,7 @@ function Ended({
         ) : (
           <p class="muted">Los demás quedaron en quiebra.</p>
         )}
+        <GamePoints state={state} you={you} />
         <div class="ended-actions">
           {asker?.id === you ? (
             <button type="button" class="primary" onClick={onRematch}>
