@@ -62,6 +62,31 @@
   height: 1.4rem;
 }
 
+.game-clock {
+  align-self: center;
+  padding: 0.2rem 0.8rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink-3);
+  background: color-mix(in srgb, var(--ink-2) 94%, transparent);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-clock-time {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.game-clock.soon {
+  border-color: var(--yellow);
+}
+
+.game-clock.over {
+  border-color: var(--orange);
+  color: var(--text);
+}
+
 .turn-clock-time {
   font-weight: 700;
   color: var(--clock);

@@ -31,6 +31,23 @@ function useCountdown(state: PublicState, now: () => number, active = true): Cou
   return { seconds, fraction: left / total, level: levelAt(seconds) };
 }
 
+export function GameClock({ state, now }: { state: PublicState; now: () => number }) {
+  const endsAt = state.phase === "playing" ? state.endsAt : null;
+  const time = useNow(endsAt !== null, 500, now);
+  if (endsAt === null) return null;
+  const left = endsAt - time;
+  if (left <= 0) return <div class="game-clock over">Se acabó el tiempo: la partida termina al cambiar de turno</div>;
+  const seconds = Math.ceil(left / 1000);
+  const hours = Math.floor(seconds / 3600);
+  const rest = seconds % 3600;
+  const text = `${hours > 0 ? `${hours}:` : ""}${String(Math.floor(rest / 60)).padStart(hours > 0 ? 2 : 1, "0")}:${String(rest % 60).padStart(2, "0")}`;
+  return (
+    <div class={left <= 5 * 60_000 ? "game-clock soon" : "game-clock"} role="timer" aria-label="Tiempo de partida">
+      Quedan <span class="game-clock-time">{text}</span>
+    </div>
+  );
+}
+
 const RADIUS = 16;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 

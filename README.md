@@ -24,6 +24,14 @@ Classic Monopoly with these choices:
   the bank, so bankruptcy never creates money. Until then that part can't be spent on
   trades, building or lifting mortgages.
 - Building is even across a color group, with the bank's 32 houses and 12 hotels.
+- The host can pick a length in the lobby: no limit (the default), 30, 45 or 60 minutes. The
+  clock starts with the game and everyone sees what is left. When it runs out the game ends
+  at the next turn change (never mid-turn, nor while someone owes money) and the player
+  with the highest net worth wins: cash, plus each property at its price (its mortgage value
+  while mortgaged), plus what its houses and hotels cost. A tie goes to more cash.
+- When a game ends, the host (or the first player still there if the host left) can start a
+  rematch: the table goes back to its lobby with the same players, pieces, colors, host and
+  length, and fresh cash and board. Players who left lose their seat; spectators can sit.
 - Each turn has a 60-second clock (10 seconds for a disconnected player). When it runs
   out, the table plays the obvious move: roll, decline, end turn, or settle debts.
 - A player who stays disconnected through 3 turns in a row that time out forfeits: they

@@ -14,8 +14,11 @@ import {
   debtsOf,
   type GameState,
   GameError,
+  netWorth,
   type Player,
+  ranking,
   rentFor,
+  rematchHost,
   restoreGame,
   syncPresence,
 } from "./game.ts";
@@ -517,12 +520,290 @@ describe("trades", () => {
   });
 });
 
+const MINUTE = 60_000;
+const START = 1_000_000;
+const LATE = START + 31 * MINUTE;
+
+/** A game of `minutes` started at START with players a, b, c… in that turn order, a's turn done. */
+function timed(minutes: number | null, count = 2): GameState {
+  const g = createGame();
+  for (const id of "abcdefgh".slice(0, count)) addPlayer(g, id, id.toUpperCase());
+  act(g, "a", { type: "setTimeLimit", minutes }, () => 0);
+  act(g, "a", { type: "start" }, () => 0, START);
+  g.players.sort((x, y) => x.id.localeCompare(y.id));
+  g.turn = { playerId: "a", stage: "done", doubles: 0, rolledDoubles: false };
+  return g;
+}
+
+describe("net worth", () => {
+  test("counts cash, property prices, mortgage values and buildings", () => {
+    const g = playing();
+    expect(netWorth(g, "a")).toBe(STARTING_CASH);
+    own(g, "a", 1, 3, 5, 6);
+    const [grau, abancay, metro] = [g.props[1], g.props[3], g.props[5]];
+    if (grau) grau.houses = 2;
+    if (abancay) abancay.houses = 5;
+    if (metro) metro.mortgaged = true;
+    expect(netWorth(g, "a")).toBe(STARTING_CASH + (60 + 2 * 50) + (60 + 5 * 50) + 100 + 100);
+  });
+
+  test("a debt counts against it, and an unknown player has none", () => {
+    const g = playing();
+    p(g, "a").cash = -75;
+    expect(netWorth(g, "a")).toBe(-75);
+    expect(netWorth(g, "nobody")).toBe(0);
+  });
+
+  test("ranks players still in the game, richest first, ties by cash then seat", () => {
+    const g = playing(4);
+    own(g, "a", 1);
+    p(g, "a").cash = 100;
+    p(g, "b").cash = 160;
+    p(g, "c").cash = 160;
+    p(g, "d").bankrupt = true;
+    expect(ranking(g).map((r) => [r.player.id, r.worth])).toEqual([
+      ["b", 160],
+      ["c", 160],
+      ["a", 160],
+    ]);
+    p(g, "c").cash = 161;
+    expect(ranking(g).map((r) => r.player.id)).toEqual(["c", "b", "a"]);
+  });
+});
+
+describe("timed games", () => {
+  test("only the host picks one of the offered lengths, and only in the lobby", () => {
+    const g = createGame();
+    addPlayer(g, "a", "A");
+    addPlayer(g, "b", "B");
+    expect(g.timeLimit).toBeNull();
+    expect(() => run(g, "b", { type: "setTimeLimit", minutes: 30 })).toThrow("quien abrió la mesa");
+    expect(() => run(g, "a", { type: "setTimeLimit", minutes: 20 })).toThrow("no existe");
+    for (const minutes of [30, 45, 60, null]) {
+      run(g, "a", { type: "setTimeLimit", minutes });
+      expect(g.timeLimit).toBe(minutes);
+    }
+    run(g, "a", { type: "start" });
+    expect(() => run(g, "a", { type: "setTimeLimit", minutes: 30 })).toThrow("antes de empezar");
+  });
+
+  test("the countdown starts with the game", () => {
+    expect(timed(45).endsAt).toBe(START + 45 * MINUTE);
+    expect(timed(null).endsAt).toBeNull();
+  });
+
+  test("before the time is up, a turn change goes on as usual", () => {
+    const g = timed(30);
+    act(g, "a", { type: "endTurn" }, dice(), START + 29 * MINUTE);
+    expect(g.phase).toBe("playing");
+    expect(g.turn?.playerId).toBe("b");
+  });
+
+  test("time running out waits for the turn to end, then the richest player wins", () => {
+    const g = timed(30, 3);
+    own(g, "a", 6);
+    own(g, "c", 1, 3);
+    p(g, "c").cash += 200;
+    act(g, "a", { type: "mortgage", square: 6 }, dice(), LATE);
+    expect(g.phase).toBe("playing");
+    act(g, "a", { type: "endTurn" }, dice(), LATE);
+    expect(g.phase).toBe("ended");
+    expect(g.endedByTime).toBe(true);
+    expect(g.winnerId).toBe("c");
+    expect(g.turn).toBeNull();
+    expect(g.log.at(-1)?.text).toContain("Se acabó el tiempo");
+  });
+
+  test("a turn change while someone owes money does not end it; the next one after they pay does", () => {
+    const g = timed(30, 4);
+    p(g, "c").cash = -5;
+    act(g, "a", { type: "bankrupt" }, dice(), LATE);
+    expect(g.phase).toBe("playing");
+    expect(g.turn?.playerId).toBe("b");
+    p(g, "c").cash = 0;
+    g.turn = { playerId: "b", stage: "done", doubles: 0, rolledDoubles: false };
+    act(g, "b", { type: "endTurn" }, dice(), LATE);
+    expect(g.phase).toBe("ended");
+    expect(g.endedByTime).toBe(true);
+  });
+
+  test("rolling doubles after time is up is still the same turn", () => {
+    const g = timed(30);
+    g.turn = { playerId: "a", stage: "roll", doubles: 0, rolledDoubles: false };
+    act(g, "a", { type: "roll" }, dice(3, 3), LATE);
+    expect(g.phase).toBe("playing");
+    expect(g.turn?.playerId).toBe("a");
+    expect(g.turn?.stage).not.toBe("done");
+  });
+
+  test("a turn played by the timeout also ends it", () => {
+    const g = timed(30);
+    autoPlay(g, dice(), LATE);
+    expect(g.phase).toBe("ended");
+    expect(g.endedByTime).toBe(true);
+  });
+
+  test("bankruptcy still ends it first, and a game without a limit or a clock never times out", () => {
+    const bust = timed(30);
+    act(bust, "a", { type: "bankrupt" }, dice(), LATE);
+    expect(bust.winnerId).toBe("b");
+    expect(bust.endedByTime).toBe(false);
+
+    const untimed = timed(null);
+    act(untimed, "a", { type: "endTurn" }, dice(), LATE * 100);
+    expect(untimed.phase).toBe("playing");
+
+    const noClock = timed(30);
+    act(noClock, "a", { type: "endTurn" }, dice());
+    expect(noClock.phase).toBe("playing");
+  });
+
+  test("games saved before timed games load as untimed", () => {
+    const { timeLimit: _a, endsAt: _b, endedByTime: _c, ...old } = timed(null);
+    const g = restoreGame(old as unknown as GameState);
+    expect([g.timeLimit, g.endsAt, g.endedByTime]).toEqual([null, null, false]);
+  });
+});
+
+/** A game of three that ran out of time, with b's and c's pieces and some state worth resetting. */
+function over(): GameState {
+  const g = timed(30, 3);
+  p(g, "b").piece = 4;
+  own(g, "b", 1, 3);
+  p(g, "b").cash = 123;
+  p(g, "b").debts = [{ to: "a", amount: 5 }];
+  Object.assign(p(g, "c"), {
+    position: JAIL_SQUARE,
+    inJail: true,
+    jailCards: ["caja" as const],
+    bankrupt: true,
+    idleTurns: 2,
+  });
+  g.trades.push({
+    id: 99,
+    from: "a",
+    to: "b",
+    give: { squares: [], cash: 1, jailCards: 0 },
+    get: { squares: [], cash: 0, jailCards: 0 },
+  });
+  act(g, "a", { type: "endTurn" }, dice(), LATE);
+  return g;
+}
+
+describe("rematch", () => {
+  test("goes back to the lobby with the same seats, pieces, colors, host and length, and fresh cash and board", () => {
+    const g = over();
+    const seats = g.players.map(({ id, name, color, piece }) => ({ id, name, color, piece }));
+    const nextId = g.nextId;
+    run(g, "a", { type: "rematch" });
+    expect(g.phase).toBe("lobby");
+    expect(g.players.map(({ id, name, color, piece }) => ({ id, name, color, piece }))).toEqual(seats);
+    expect(g.hostId).toBe("a");
+    expect(g.timeLimit).toBe(30);
+    expect([g.endsAt, g.winnerId, g.turn, g.dice, g.deadline, g.endedByTime]).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      false,
+    ]);
+    expect(g.trades).toEqual([]);
+    expect(g.props.every((x) => x === null || (x.owner === null && x.houses === 0 && !x.mortgaged))).toBe(true);
+    for (const player of g.players) {
+      expect(player).toMatchObject({
+        cash: STARTING_CASH,
+        position: 0,
+        inJail: false,
+        jailCards: [],
+        bankrupt: false,
+        debts: [],
+        idleTurns: 0,
+      });
+    }
+    expect(g.nextId).toBeGreaterThan(nextId);
+    expect(g.log.at(-1)?.text).toBe("A pidió la revancha.");
+    expect(g.log.some((e) => e.text.includes("Se acabó el tiempo"))).toBe(true);
+  });
+
+  test("the new game starts from the lobby like any other, with spectators able to sit", () => {
+    const g = over();
+    run(g, "a", { type: "rematch" });
+    addPlayer(g, "z", "Z");
+    expect(g.players).toHaveLength(4);
+    act(g, "a", { type: "start" }, dice(), START);
+    expect(g.phase).toBe("playing");
+    expect(g.endsAt).toBe(START + 30 * MINUTE);
+  });
+
+  test("players who left lose their seat", () => {
+    const g = over();
+    syncPresence(g, new Set(["a", "b"]));
+    run(g, "a", { type: "rematch" });
+    expect(g.players.map((x) => x.id)).toEqual(["a", "b"]);
+    expect(g.log.some((e) => e.text === "C se fue.")).toBe(true);
+  });
+
+  test("the host asks, or the first present player when the host is gone", () => {
+    const g = over();
+    syncPresence(g, new Set(["b", "c"]));
+    expect(() => run(g, "c", { type: "rematch" })).toThrow("quien abrió la mesa");
+    expect(() => run(g, "a", { type: "rematch" })).toThrow("quien abrió la mesa");
+    run(g, "b", { type: "rematch" });
+    expect(g.hostId).toBe("b");
+    expect(g.players.map((x) => x.id)).toEqual(["b", "c"]);
+  });
+
+  test("bots keep their seats and never ask for it", () => {
+    const g = timed(30, 3);
+    const bot = p(g, "c");
+    bot.bot = true;
+    syncPresence(g, new Set(["a"]));
+    expect(rematchHost(g)?.id).toBe("a");
+    act(g, "a", { type: "endTurn" }, dice(), LATE);
+    syncPresence(g, new Set(["b"]));
+    expect(g.players.find((x) => x.id === "a")?.connected).toBe(false);
+    expect(rematchHost(g)?.id).toBe("b");
+    expect(() => run(g, "c", { type: "rematch" })).toThrow("quien abrió la mesa");
+    run(g, "b", { type: "rematch" });
+    expect(g.players.map((x) => [x.id, x.bot ?? false])).toEqual([
+      ["b", false],
+      ["c", true],
+    ]);
+    expect(g.hostId).toBe("b");
+  });
+
+  test("only after a game has ended", () => {
+    const g = timed(null);
+    expect(() => run(g, "a", { type: "rematch" })).toThrow("cuando termina");
+    const lobby = createGame();
+    addPlayer(lobby, "a", "A");
+    expect(() => run(lobby, "a", { type: "rematch" })).toThrow(GameError);
+  });
+});
+
+const action = (a: unknown) => parseClientMessage(JSON.stringify({ type: "action", action: a }));
+
 describe("protocol", () => {
   test("rejects malformed messages", () => {
     expect(parseClientMessage("nope")).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: "action", action: { type: "build", square: 99 } }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: "action", action: { type: "hack" } }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana" }))).toEqual({ type: "join", name: "Ana" });
+  });
+
+  test("accepts the rematch and time limit actions, and rejects a malformed limit", () => {
+    expect(action({ type: "rematch" })).toEqual({ type: "action", action: { type: "rematch" } });
+    expect(action({ type: "setTimeLimit", minutes: 45 })).toEqual({
+      type: "action",
+      action: { type: "setTimeLimit", minutes: 45 },
+    });
+    expect(action({ type: "setTimeLimit", minutes: null })).toEqual({
+      type: "action",
+      action: { type: "setTimeLimit", minutes: null },
+    });
+    expect(action({ type: "setTimeLimit", minutes: "45" })).toBeNull();
+    expect(action({ type: "setTimeLimit" })).toBeNull();
   });
 });
 

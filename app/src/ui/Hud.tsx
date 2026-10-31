@@ -14,6 +14,8 @@ import {
   ownedBy,
   type Player,
   type PublicState,
+  ranking,
+  rematchHost,
 } from "../../../shared/game.ts";
 import { isMuted, setMuted } from "../audio.ts";
 import type { Table } from "../useTable.ts";
@@ -24,7 +26,7 @@ import { Pips } from "./Pips.tsx";
 import { Properties } from "./Properties.tsx";
 import { RollButton } from "./RollButton.tsx";
 import { TradeComposer, TradeOffers } from "./Trades.tsx";
-import { TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./TurnClock.tsx";
+import { GameClock, TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./TurnClock.tsx";
 
 interface Props {
   table: Table;
@@ -102,6 +104,7 @@ export function Hud({
 
       <div class="dock">
         {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
+        <GameClock state={state} now={serverNow} />
         <TurnClock state={state} you={you} now={serverNow} />
         <ActionBar state={state} me={me} act={act} shaking={shaking} onRoll={onRoll} rolling={rolling} />
         <div class="toolbar">
@@ -158,7 +161,15 @@ export function Hud({
       {sheet?.kind === "trade" && me && (
         <TradeComposer state={state} me={me} initialPartner={sheet.partner} act={act} onClose={() => setSheet(null)} />
       )}
-      {state.phase === "ended" && <Ended state={state} you={you} onNewRoom={onNewRoom} onHome={onHome} />}
+      {state.phase === "ended" && (
+        <Ended
+          state={state}
+          you={you}
+          onRematch={() => act({ type: "rematch" })}
+          onNewRoom={onNewRoom}
+          onHome={onHome}
+        />
+      )}
     </div>
   );
 }
@@ -444,15 +455,18 @@ function CardToast({
 function Ended({
   state,
   you,
+  onRematch,
   onNewRoom,
   onHome,
 }: {
   state: PublicState;
   you: string | null;
+  onRematch: () => void;
   onNewRoom: () => void;
   onHome: () => void;
 }) {
   const winner = findPlayer(state, state.winnerId);
+  const asker = rematchHost(state);
   return (
     <dialog open class="ended" aria-labelledby="ended-title">
       <Confetti />
@@ -461,9 +475,34 @@ function Ended({
         <h2 id="ended-title">
           {winner?.id === you ? "¡Ganaste Cholopolis!" : `¡${winner?.name ?? "Alguien"} ganó Cholopolis!`}
         </h2>
-        <p class="muted">Los demás quedaron en quiebra.</p>
+        {state.endedByTime ? (
+          <>
+            <p class="muted">Se acabó el tiempo. Gana quien tiene más patrimonio: efectivo, propiedades y edificios.</p>
+            <ol class="ranking">
+              {ranking(state).map(({ player, worth }) => (
+                <li key={player.id} class={player.id === state.winnerId ? "winner" : undefined}>
+                  <Pawn player={player} size={14} />
+                  <span class="ranking-name">
+                    {player.name}
+                    {player.id === you && <span class="muted"> (tú)</span>}
+                  </span>
+                  <span class="ranking-worth">{money(worth)}</span>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <p class="muted">Los demás quedaron en quiebra.</p>
+        )}
         <div class="ended-actions">
-          <button type="button" class="primary" onClick={onNewRoom}>
+          {asker?.id === you ? (
+            <button type="button" class="primary" onClick={onRematch}>
+              Revancha
+            </button>
+          ) : (
+            asker && <p class="waiting">{asker.name} puede pedir la revancha.</p>
+          )}
+          <button type="button" class={asker?.id === you ? undefined : "primary"} onClick={onNewRoom}>
             Abrir otra mesa
           </button>
           <button type="button" onClick={onHome}>

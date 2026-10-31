@@ -46,6 +46,8 @@ export const BOT_NAMES = [
   "Bot Vallejo",
   "Bot Susana",
 ] as const;
+export const TIME_LIMITS = [30, 45, 60] as const;
+const MINUTE_MS = 60_000;
 
 export type Rng = () => number;
 export type Stage = "roll" | "buy" | "done";
@@ -153,6 +155,11 @@ export interface GameState {
   trades: Trade[];
   log: LogEntry[];
   winnerId: string | null;
+  /** Minutes; null is no limit. */
+  timeLimit: number | null;
+  /** Epoch ms; set at start. The game ends at the first turn change after it. */
+  endsAt: number | null;
+  endedByTime: boolean;
   /** When the current turn times out (epoch ms); set by the server. */
   deadline: number | null;
   nextId: number;
@@ -164,6 +171,8 @@ export type PublicState = Omit<GameState, "decks">;
 
 export type Action =
   | { type: "start" }
+  | { type: "setTimeLimit"; minutes: number | null }
+  | { type: "rematch" }
   | { type: "choosePiece"; piece: number }
   | { type: "addBot" }
   | { type: "removeBot"; player: string }
@@ -205,6 +214,9 @@ export function createGame(): GameState {
     trades: [],
     log: [],
     winnerId: null,
+    timeLimit: null,
+    endsAt: null,
+    endedByTime: false,
     deadline: null,
     nextId: 1,
     decks: { suerte: [], caja: [] },
@@ -214,7 +226,14 @@ export function createGame(): GameState {
 /** A game as saved by any version: dice data this one can't replay is dropped. */
 export function restoreGame(saved: GameState): GameState {
   const { toss: _legacy, ...g } = saved as GameState & { toss?: unknown };
-  return { ...g, diceToss: parseDiceToss(g.diceToss), players: g.players.map(restorePlayer) };
+  return {
+    ...g,
+    diceToss: parseDiceToss(g.diceToss),
+    players: g.players.map(restorePlayer),
+    timeLimit: g.timeLimit ?? null,
+    endsAt: g.endsAt ?? null,
+    endedByTime: g.endedByTime ?? false,
+  };
 }
 
 /** Fills what older saves lack; a single `creditor` becomes the debt it stood for. */
@@ -246,6 +265,12 @@ function player(g: GameState, id: string): Player {
 
 export function activePlayers(g: PublicState): Player[] {
   return g.players.filter((p) => !p.bankrupt);
+}
+
+/** Who can ask for the rematch: the host, or the first person still present once the host is gone. Bots never ask. */
+export function rematchHost(g: PublicState): Player | undefined {
+  const present = g.players.filter((p) => p.connected && !p.bot);
+  return present.find((p) => p.id === g.hostId) ?? present[0];
 }
 
 export function debtors(g: PublicState): Player[] {
@@ -299,6 +324,25 @@ function prop(g: PublicState, index: number): Property {
 
 export function ownedBy(g: PublicState, playerId: string): number[] {
   return g.props.flatMap((p, i) => (p?.owner === playerId ? [i] : []));
+}
+
+/** Cash, plus each property at its price (its mortgage value while mortgaged), plus what its buildings cost. */
+export function netWorth(g: PublicState, playerId: string): number {
+  let worth = findPlayer(g, playerId)?.cash ?? 0;
+  for (const i of ownedBy(g, playerId)) {
+    const sq = square(i);
+    if (!isOwnable(sq)) continue;
+    worth += g.props[i]?.mortgaged ? mortgageValue(sq) : sq.price;
+    if (sq.kind === "street") worth += (g.props[i]?.houses ?? 0) * sq.houseCost;
+  }
+  return worth;
+}
+
+/** Players still in the game, richest first; a tie goes to more cash, then to the earlier seat. */
+export function ranking(g: PublicState): { player: Player; worth: number }[] {
+  return activePlayers(g)
+    .map((p) => ({ player: p, worth: netWorth(g, p.id) }))
+    .sort((a, b) => b.worth - a.worth || b.player.cash - a.player.cash);
 }
 
 export function ownsGroup(g: PublicState, playerId: string, index: number): boolean {
@@ -533,9 +577,25 @@ function uniqueName(g: GameState, raw: string): string {
 
 // ---------------------------------------------------------------- actions
 
-export function act(g: GameState, playerId: string, action: Action, rng: Rng): void {
+/**
+ * Applies a player's action. `now` (epoch ms) is the only clock the rules see: it starts a timed
+ * game's countdown and decides, at a turn change, whether the time is up. Without it a game never times out.
+ */
+export function act(g: GameState, playerId: string, action: Action, rng: Rng, now?: number): void {
+  const turn = g.turn;
+  const wasLobby = g.phase === "lobby";
+  perform(g, playerId, action, rng);
+  if (wasLobby && g.phase === "playing" && g.timeLimit !== null && now !== undefined) {
+    g.endsAt = now + g.timeLimit * MINUTE_MS;
+  }
+  if (g.turn !== turn) endIfTimeUp(g, now);
+}
+
+function perform(g: GameState, playerId: string, action: Action, rng: Rng): void {
   g.moves = [];
   if (action.type === "start") return start(g, playerId, rng);
+  if (action.type === "setTimeLimit") return setTimeLimit(g, playerId, action.minutes);
+  if (action.type === "rematch") return rematch(g, playerId);
   if (action.type === "choosePiece") return choosePiece(g, playerId, action.piece);
   if (action.type === "addBot") return addBot(g, playerId);
   if (action.type === "removeBot") return removeBot(g, playerId, action.player);
@@ -619,6 +679,37 @@ function choosePiece(g: GameState, playerId: string, piece: number): void {
   const holder = g.players.find((x) => x.piece === piece && x.id !== playerId);
   if (holder) fail(`${holder.name} ya tiene esa ficha.`);
   p.piece = piece;
+}
+
+function setTimeLimit(g: GameState, playerId: string, minutes: number | null): void {
+  if (g.phase !== "lobby") fail("El tiempo se elige antes de empezar.");
+  if (g.hostId !== playerId) fail("Solo quien abrió la mesa puede elegir el tiempo.");
+  if (minutes !== null && !(TIME_LIMITS as readonly number[]).includes(minutes)) fail("Ese tiempo no existe.");
+  g.timeLimit = minutes;
+}
+
+/** Back to the lobby with the seats still present, fresh cash and board. */
+function rematch(g: GameState, playerId: string): void {
+  if (g.phase !== "ended") fail("La revancha se pide cuando termina la partida.");
+  const host = rematchHost(g);
+  if (host?.id !== playerId) fail("Solo quien abrió la mesa puede pedir la revancha.");
+  for (const gone of g.players.filter((p) => !p.connected)) log(g, `${gone.name} se fue.`);
+  const { log: history, nextId, rollId, timeLimit } = g;
+  const players = g.players.filter((p) => p.connected);
+  for (const p of players) {
+    Object.assign(p, {
+      position: 0,
+      cash: STARTING_CASH,
+      inJail: false,
+      jailTurns: 0,
+      jailCards: [],
+      bankrupt: false,
+      debts: [],
+      idleTurns: 0,
+    });
+  }
+  Object.assign(g, createGame(), { log: history, nextId, rollId, timeLimit, players, hostId: host.id });
+  log(g, `${host.name} pidió la revancha.`);
 }
 
 function start(g: GameState, playerId: string, rng: Rng): void {
@@ -971,8 +1062,29 @@ function goBankrupt(g: GameState, p: Player, toBank = false): void {
 
 // ---------------------------------------------------------------- timeouts
 
+/** Ends a timed game whose time is up, once the turn has changed and nobody owes money; the richest player wins. */
+function endIfTimeUp(g: GameState, now: number | undefined): void {
+  if (g.phase !== "playing" || g.endsAt === null || now === undefined || now < g.endsAt) return;
+  if (debtors(g).length > 0) return;
+  const winner = ranking(g)[0];
+  if (!winner) return;
+  g.phase = "ended";
+  g.endedByTime = true;
+  g.winnerId = winner.player.id;
+  g.turn = null;
+  g.trades = [];
+  log(g, `Se acabó el tiempo. ¡${winner.player.name} ganó Cholopolis con ${money(winner.worth)}!`);
+}
+
+/** The table plays for whoever is holding up the game; `now` is as in `act`. */
+export function autoPlay(g: GameState, rng: Rng, now?: number): void {
+  const turn = g.turn;
+  playForTimeout(g, rng);
+  if (g.turn !== turn) endIfTimeUp(g, now);
+}
+
 /** Plays the obvious move for whoever is holding up the game: roll, decline, end turn, or settle debts. */
-export function autoPlay(g: GameState, rng: Rng): void {
+function playForTimeout(g: GameState, rng: Rng): void {
   g.moves = [];
   if (g.phase !== "playing") return;
   const owing = debtors(g);

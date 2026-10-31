@@ -41,6 +41,7 @@ function parseAction(v: unknown): Action | null {
   if (!isObject(v)) return null;
   switch (v.type) {
     case "start":
+    case "rematch":
     case "buy":
     case "decline":
     case "endTurn":
@@ -62,6 +63,8 @@ function parseAction(v: unknown): Action | null {
         ...(v.rollId === undefined ? {} : { rollId: v.rollId as number }),
       };
     }
+    case "setTimeLimit":
+      return v.minutes === null || isCount(v.minutes) ? { type: "setTimeLimit", minutes: v.minutes } : null;
     case "choosePiece":
       return Number.isInteger(v.piece) && (v.piece as number) >= 0 && (v.piece as number) < PIECES.length
         ? { type: "choosePiece", piece: v.piece as number }

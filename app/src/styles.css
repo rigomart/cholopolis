@@ -907,9 +907,53 @@ select {
 
 .ended-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
+  align-items: center;
   margin-top: 1rem;
+}
+
+.ended-actions .waiting {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.ranking {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranking li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  border: 1.5px solid var(--ink-3);
+  border-radius: var(--radius);
+  background: var(--ink);
+}
+
+.ranking li.winner {
+  border-color: var(--yellow);
+}
+
+.ranking-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-worth {
+  font-weight: 700;
 }
 
 /* ------------------------------------------------------------------ narrow screens */
@@ -1011,6 +1055,37 @@ select {
   font-weight: 700;
   margin-bottom: 0.4rem;
   padding: 0;
+}
+
+.lengths {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+}
+
+.lengths legend {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  padding: 0;
+}
+
+.lengths p {
+  grid-column: 1 / -1;
+}
+
+.length {
+  padding: 0.45rem 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--ink);
+}
+
+.length.mine {
+  border-color: var(--yellow);
+  box-shadow: inset 0 0 0 1.5px var(--yellow);
 }
 
 .piece {
