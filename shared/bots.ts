@@ -35,9 +35,11 @@ export function decide(state: PublicState, me: string): Action | null {
   }
 }
 
-/** The next move any bot at the table would make, for the table to play on its behalf. */
+/** Settles bot debts, plays the current bot's turn, then answers off-turn offers. */
 export function botMove(state: PublicState): { playerId: string; action: Action } | null {
-  for (const p of state.players) {
+  const owing = debtors(state);
+  const current = owing.length === 0 ? findPlayer(state, state.turn?.playerId) : undefined;
+  for (const p of [...owing, ...(current ? [current] : []), ...state.players]) {
     if (!p.bot) continue;
     const action = decide(state, p.id);
     if (action) return { playerId: p.id, action };
