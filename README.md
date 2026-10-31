@@ -110,12 +110,14 @@ person earned and your new place this week.
   authoritative state; a single `Lobby` Durable Object tracks which tables are open, and a
   single `Leaderboard` Durable Object (SQLite) keeps every finished game.
   Clients only send intents; the table applies them through the rules and broadcasts
-  the new state to every socket. Sockets use the hibernation API, and a table nobody
-  has visited in 24 hours deletes itself.
+  the new state to every socket. Sockets use the hibernation API. A table with
+  no open player or spectator connections deletes its saved game and seat tokens after
+  24 hours. Reconnecting before then restores the same game and cancels that expiry.
 - Bots are players with a `bot` flag and no socket; they always count as present. The table
   plays them (`shared/bots.ts` decides each move) about a second after each move is due. One
   alarm serves the turn clock, the bots and the 24-hour expiry (`worker/alarm.ts`); with no
-  sockets open only the expiry runs, so bots never play to an empty table.
+  sockets open only the expiry runs, so bots never play to an empty table. The expiry deadline
+  is saved across hibernation; a delayed or retried gameplay alarm cannot delete a room early.
 - `app/` is the client: Preact for the panels and plain three.js for the board
   (`app/src/scene`). The board face is drawn onto a canvas texture.
 - Dice are thrown with a small deterministic physics solver (`app/src/scene/dicePhysics.ts`).
@@ -142,6 +144,10 @@ person earned and your new place this week.
   computed from the results on each read (cached 30 seconds), so the formula can change
   without losing history. `GET /api/ranking?period=week|all` returns the top 50; send your
   token in the `X-Cholopolis-Token` header, never in the URL, to get your own row too.
+  If saving a result fails, requesting a rematch retries it before clearing the finished game;
+  while the leaderboard is unavailable, the end screen stays available for another attempt.
+  Seat tokens are discarded once their players are removed, so replaced lobby seats and
+  rematches do not leave obsolete reconnect data behind.
 
 ## Development
 

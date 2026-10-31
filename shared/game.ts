@@ -1115,6 +1115,7 @@ function playForTimeout(g: GameState, rng: Rng): void {
     for (const d of owing) {
       raiseCash(g, d);
       if (d.cash < 0) goBankrupt(g, d);
+      if (g.phase !== "playing") return;
     }
     return;
   }
