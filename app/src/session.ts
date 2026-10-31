@@ -1,4 +1,5 @@
-import { ROOM_PATTERN } from "../../shared/protocol.ts";
+import type { RankingPeriod, RankingResponse } from "../../shared/leaderboard.ts";
+import { ROOM_PATTERN, TOKEN_HEADER } from "../../shared/protocol.ts";
 
 const TOKEN_KEY = "cholopolis:token";
 const NAME_KEY = "cholopolis:name";
@@ -61,3 +62,13 @@ export async function roomExists(room: string): Promise<boolean> {
 
 export const findOpenRoom = () => requestRoom("/api/mesa-abierta");
 export const createRoom = () => requestRoom("/api/mesa-nueva");
+
+/** The ranking for a period, with your own row. `fresh` bypasses the browser's HTTP cache. */
+export async function fetchRanking(period: RankingPeriod, fresh = false): Promise<RankingResponse> {
+  const res = await call(`/api/ranking?period=${period}`, {
+    headers: { [TOKEN_HEADER]: browserToken() },
+    cache: fresh ? "no-cache" : "default",
+  });
+  if (!res.ok) throw new Error(`No se pudo cargar el ranking (${res.status}).`);
+  return (await res.json()) as RankingResponse;
+}

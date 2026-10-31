@@ -1,0 +1,133 @@
+/* ------------------------------------------------------------------ ranking: home sheet */
+
+.ranking-sheet {
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.ranking-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.ranking-tabs button {
+  flex: 1;
+}
+
+.ranking-sheet p {
+  margin: 0;
+}
+
+.leaderboard {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard li {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.7rem;
+  border: 1.5px solid var(--ink-3);
+  border-radius: var(--radius);
+  background: var(--ink);
+}
+
+.leaderboard li.you {
+  border-color: var(--yellow);
+}
+
+.leaderboard li.leaderboard-gap {
+  justify-content: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+}
+
+.leaderboard-rank {
+  min-width: 1.6em;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: right;
+}
+
+.leaderboard li:nth-child(1) .leaderboard-rank {
+  color: var(--yellow);
+}
+
+.leaderboard-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.leaderboard-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-points {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ranking-note {
+  margin-top: auto;
+  padding-top: 0.6rem;
+}
+
+.gate-ranking {
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------------ ranking: end screen */
+
+.game-points {
+  margin-top: 0.9rem;
+  text-align: left;
+}
+
+.game-points ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-points li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.game-points-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-points-earned {
+  font-weight: 700;
+  color: var(--green);
+}
+
+.game-points p {
+  margin: 0.5rem 0 0;
+  text-align: center;
+}

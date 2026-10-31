@@ -26,6 +26,10 @@ export type ServerMessage =
   | { type: "reaction"; playerId: string; reaction: ReactionId };
 
 export const ROOM_PATTERN = /^[a-z0-9]{6,12}$/;
+/** A browser token, as `browserToken()` makes them. */
+export const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+/** Carries your token to `GET /api/ranking`, which finds your own row by it; never sent in a URL. */
+export const TOKEN_HEADER = "X-Cholopolis-Token";
 export const MAX_MESSAGE_BYTES = 4096;
 
 type Json = Record<string, unknown>;

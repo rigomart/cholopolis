@@ -46,12 +46,31 @@ Classic Monopoly with these choices:
 - Bots roll, buy when the price leaves them S/260, end their turn, never build, turn
   down every trade, and in debt sell, then mortgage, then go bankrupt.
 
+## Ranking
+
+"Ver el ranking" on the home page shows this week (Monday to Sunday, Lima time) and all
+time: the top 50, plus your own row wherever you stand. The end screen shows what each
+person earned and your new place this week.
+
+- Only finished games count (someone won by bankruptcy or by time) with at least 2 people
+  at the table. Bots never score, and one person against bots scores nothing. A game
+  everyone left never ends, so it never counts.
+- Finishing order: the winner, then the others still in by net worth, then the bankrupt
+  from the last to go out to the first.
+- Among the people at the table (bots left out), you get 1 point for finishing plus 10 for
+  each person behind you: with 4 people, 31, 21, 11 and 1. Ties in the ranking go to more
+  wins, then fewer games.
+- There are no accounts: you are a one-way hash of your browser's token, under the name you
+  last played with. Clearing the browser's data, or playing on another device, starts a new
+  row.
+
 ## How it works
 
 - `shared/` holds the rules engine (`game.ts`, pure and tested), the board and cards,
   and the WebSocket protocol. Both the server and the client import it.
 - `worker/` is one Cloudflare Worker. Each table is a `Table` Durable Object holding the
-  authoritative state; a single `Lobby` Durable Object tracks which tables are open.
+  authoritative state; a single `Lobby` Durable Object tracks which tables are open, and a
+  single `Leaderboard` Durable Object (SQLite) keeps every finished game.
   Clients only send intents; the table applies them through the rules and broadcasts
   the new state to every socket. Sockets use the hibernation API, and a table nobody
   has visited in 24 hours deletes itself.
@@ -73,6 +92,14 @@ Classic Monopoly with these choices:
   WebGL. They play a soft sound unless muted, and clients skip message types they don't know.
 - Players are anonymous. A random token in localStorage maps a browser to its seat, so a
   reload or dropped connection puts you back where you were.
+- When a game ends, the table reports it to the `Leaderboard` before showing the end screen:
+  game id (room and start time), when and how it ended, how long it took, and per player a
+  hash of their token (never the token), name, bot or not, place and net worth
+  (`shared/leaderboard.ts` builds it). The leaderboard stores these raw results and ignores a
+  game it already has, so a retry never counts twice and a rematch is a new game. Points are
+  computed from the results on each read (cached 30 seconds), so the formula can change
+  without losing history. `GET /api/ranking?period=week|all` returns the top 50; send your
+  token in the `X-Cholopolis-Token` header, never in the URL, to get your own row too.
 
 ## Development
 
@@ -99,6 +126,8 @@ Merging to `main` deploys. `.github/workflows/deploy.yml` runs the same checks a
 pull requests, runs `wrangler deploy`, and then smoke tests `cholopolis.rigos.dev` against
 the build. It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository
 secrets. Games live in Durable Object storage, so they survive a deploy; open sockets drop
-and clients reconnect. Roll back with `bunx wrangler rollback`.
+and clients reconnect. New Durable Object classes come with a migration tag in
+`wrangler.jsonc` (`v2` added `Leaderboard`), which the deploy applies on its own. Games
+already under way when the leaderboard shipped have no start time and don't count. Roll back with `bunx wrangler rollback`.
 
 `bun run deploy` does the same check, build and deploy from your machine.

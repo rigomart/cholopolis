@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { parseRoomCode, roomExists, savedName } from "../session.ts";
 import { Wordmark } from "./bits.tsx";
+import { RankingSheet } from "./Ranking.tsx";
 
 interface Props {
   room: string | null;
@@ -20,6 +21,7 @@ export function NameGate({ room, onEnter, onCreate }: Props) {
   const [code, setCode] = useState(room ?? "");
   const [busy, setBusy] = useState<"enter" | "create" | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const [rankingOpen, setRankingOpen] = useState(false);
 
   useEffect(() => {
     setCode(room ?? "");
@@ -59,66 +61,72 @@ export function NameGate({ room, onEnter, onCreate }: Props) {
   };
 
   return (
-    <main class="gate">
-      <Wordmark />
-      <p class="gate-lede">
-        Compra el Malecón, cobra peaje en la Javier Prado y quiebra a tus patas. Hasta 8 jugadores, sin cuentas.
-      </p>
-      <form class="gate-form" onSubmit={enter}>
-        <div class="gate-fields">
-          <div>
-            <label htmlFor="name">¿Cómo te llamamos en la mesa?</label>
-            <input
-              id="name"
-              maxLength={20}
-              placeholder="Ej. Chabuca"
-              value={name}
-              readOnly={busy !== null}
-              aria-invalid={problem?.field === "name"}
-              onInput={(e) => {
-                setName(e.currentTarget.value);
-                if (problem?.field === "name") setProblem(null);
-              }}
-            />
+    <>
+      <main class="gate">
+        <Wordmark />
+        <p class="gate-lede">
+          Compra el Malecón, cobra peaje en la Javier Prado y quiebra a tus patas. Hasta 8 jugadores, sin cuentas.
+        </p>
+        <form class="gate-form" onSubmit={enter}>
+          <div class="gate-fields">
+            <div>
+              <label htmlFor="name">¿Cómo te llamamos en la mesa?</label>
+              <input
+                id="name"
+                maxLength={20}
+                placeholder="Ej. Chabuca"
+                value={name}
+                readOnly={busy !== null}
+                aria-invalid={problem?.field === "name"}
+                onInput={(e) => {
+                  setName(e.currentTarget.value);
+                  if (problem?.field === "name") setProblem(null);
+                }}
+              />
+            </div>
+            <div>
+              <label htmlFor="code">¿Tienes un código?</label>
+              <input
+                id="code"
+                placeholder="Código o enlace"
+                autoCapitalize="off"
+                autoComplete="off"
+                autoCorrect="off"
+                spellcheck={false}
+                value={code}
+                readOnly={busy !== null}
+                aria-invalid={problem?.field === "code"}
+                onInput={(e) => {
+                  setCode(e.currentTarget.value);
+                  if (problem?.field === "code") setProblem(null);
+                }}
+              />
+            </div>
           </div>
-          <div>
-            <label htmlFor="code">¿Tienes un código?</label>
-            <input
-              id="code"
-              placeholder="Código o enlace"
-              autoCapitalize="off"
-              autoComplete="off"
-              autoCorrect="off"
-              spellcheck={false}
-              value={code}
-              readOnly={busy !== null}
-              aria-invalid={problem?.field === "code"}
-              onInput={(e) => {
-                setCode(e.currentTarget.value);
-                if (problem?.field === "code") setProblem(null);
-              }}
-            />
+          <div class="gate-actions">
+            <button type="submit" class="primary" disabled={busy !== null}>
+              {busy === "enter" ? "Entrando…" : "Entrar"}
+            </button>
+            <button type="button" disabled={busy !== null} onClick={() => run("create", onCreate)}>
+              {busy === "create" ? "Creando…" : "Crear mesa nueva"}
+            </button>
           </div>
-        </div>
-        <div class="gate-actions">
-          <button type="submit" class="primary" disabled={busy !== null}>
-            {busy === "enter" ? "Entrando…" : "Entrar"}
-          </button>
-          <button type="button" disabled={busy !== null} onClick={() => run("create", onCreate)}>
-            {busy === "create" ? "Creando…" : "Crear mesa nueva"}
-          </button>
-        </div>
-        {problem && (
-          <p role="alert" class="form-error">
-            {problem.message}
-          </p>
-        )}
-        {problem?.field !== "code" && (
-          <p class="gate-note">
-            {target ? `Vas a entrar a la mesa ${target}.` : "Te sentamos en una mesa que esté esperando jugadores."}
-          </p>
-        )}
-      </form>
-    </main>
+          {problem && (
+            <p role="alert" class="form-error">
+              {problem.message}
+            </p>
+          )}
+          {problem?.field !== "code" && (
+            <p class="gate-note">
+              {target ? `Vas a entrar a la mesa ${target}.` : "Te sentamos en una mesa que esté esperando jugadores."}
+            </p>
+          )}
+        </form>
+        <button type="button" class="link gate-ranking" onClick={() => setRankingOpen(true)}>
+          Ver el ranking 🏆
+        </button>
+      </main>
+      {rankingOpen && <RankingSheet onClose={() => setRankingOpen(false)} />}
+    </>
   );
 }
