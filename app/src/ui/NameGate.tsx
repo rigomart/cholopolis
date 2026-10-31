@@ -1,30 +1,61 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
-import { savedName } from "../session.ts";
+import { parseRoomCode, roomExists, savedName } from "../session.ts";
 import { Wordmark } from "./bits.tsx";
 
 interface Props {
   room: string | null;
-  onEnter: (name: string) => Promise<void>;
+  /** `code` is null to be seated wherever there's room. */
+  onEnter: (name: string, code: string | null) => Promise<void>;
+  onCreate: (name: string) => Promise<void>;
 }
 
-export function NameGate({ room, onEnter }: Props) {
-  const [name, setName] = useState(savedName());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+interface Problem {
+  field?: "name" | "code";
+  message: string;
+}
 
-  const submit = async (e: Event) => {
-    e.preventDefault();
+export function NameGate({ room, onEnter, onCreate }: Props) {
+  const [name, setName] = useState(savedName());
+  const [code, setCode] = useState(room ?? "");
+  const [busy, setBusy] = useState<"enter" | "create" | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
+
+  useEffect(() => {
+    setCode(room ?? "");
+    setProblem(null);
+  }, [room]);
+
+  const target = parseRoomCode(code);
+
+  const run = async (kind: "enter" | "create", go: (name: string) => Promise<boolean | void>) => {
     const clean = name.trim();
-    if (!clean) return setError("Escribe un nombre para entrar.");
-    setBusy(true);
-    setError("");
+    if (!clean) return setProblem({ field: "name", message: "Escribe un nombre para entrar." });
+    setBusy(kind);
+    setProblem(null);
     try {
-      await onEnter(clean);
+      if ((await go(clean)) === false) return setBusy(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo entrar. Inténtalo otra vez.");
-      setBusy(false);
+      setProblem({ message: err instanceof Error ? err.message : "No se pudo entrar. Inténtalo otra vez." });
+      setBusy(null);
     }
+  };
+
+  const enter = (e: Event) => {
+    e.preventDefault();
+    if (code.trim() && !target) {
+      return setProblem({
+        field: "code",
+        message: "Ese código no parece de una mesa. Son entre 6 y 12 letras y números, o pega el enlace.",
+      });
+    }
+    return run("enter", async (clean) => {
+      if (target && !(await roomExists(target))) {
+        setProblem({ field: "code", message: "No encontramos esa mesa. Revisa el código o crea una mesa nueva." });
+        return false;
+      }
+      await onEnter(clean, target);
+    });
   };
 
   return (
@@ -33,28 +64,60 @@ export function NameGate({ room, onEnter }: Props) {
       <p class="gate-lede">
         Compra el Malecón, cobra peaje en la Javier Prado y quiebra a tus patas. Hasta 8 jugadores, sin cuentas.
       </p>
-      <form class="gate-form" onSubmit={submit}>
-        <label htmlFor="name">¿Cómo te llamamos en la mesa?</label>
-        <div class="gate-row">
-          <input
-            id="name"
-            maxLength={20}
-            placeholder="Ej. Chabuca"
-            value={name}
-            onInput={(e) => setName(e.currentTarget.value)}
-          />
-          <button type="submit" class="primary" disabled={busy}>
-            {busy ? "Entrando…" : "Entrar"}
+      <form class="gate-form" onSubmit={enter}>
+        <div class="gate-fields">
+          <div>
+            <label htmlFor="name">¿Cómo te llamamos en la mesa?</label>
+            <input
+              id="name"
+              maxLength={20}
+              placeholder="Ej. Chabuca"
+              value={name}
+              readOnly={busy !== null}
+              aria-invalid={problem?.field === "name"}
+              onInput={(e) => {
+                setName(e.currentTarget.value);
+                if (problem?.field === "name") setProblem(null);
+              }}
+            />
+          </div>
+          <div>
+            <label htmlFor="code">¿Tienes un código?</label>
+            <input
+              id="code"
+              placeholder="Código o enlace"
+              autoCapitalize="off"
+              autoComplete="off"
+              autoCorrect="off"
+              spellcheck={false}
+              value={code}
+              readOnly={busy !== null}
+              aria-invalid={problem?.field === "code"}
+              onInput={(e) => {
+                setCode(e.currentTarget.value);
+                if (problem?.field === "code") setProblem(null);
+              }}
+            />
+          </div>
+        </div>
+        <div class="gate-actions">
+          <button type="submit" class="primary" disabled={busy !== null}>
+            {busy === "enter" ? "Entrando…" : "Entrar"}
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => run("create", onCreate)}>
+            {busy === "create" ? "Creando…" : "Crear mesa nueva"}
           </button>
         </div>
-        {error && (
+        {problem && (
           <p role="alert" class="form-error">
-            {error}
+            {problem.message}
           </p>
         )}
-        <p class="gate-note">
-          {room ? `Vas a entrar a la mesa ${room}.` : "Te sentamos en una mesa que esté esperando jugadores."}
-        </p>
+        {problem?.field !== "code" && (
+          <p class="gate-note">
+            {target ? `Vas a entrar a la mesa ${target}.` : "Te sentamos en una mesa que esté esperando jugadores."}
+          </p>
+        )}
       </form>
     </main>
   );

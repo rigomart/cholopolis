@@ -1,3 +1,5 @@
+import { ROOM_PATTERN } from "../../shared/protocol.ts";
+
 const TOKEN_KEY = "cholopolis:token";
 const NAME_KEY = "cholopolis:name";
 
@@ -21,15 +23,40 @@ export function roomFromPath(): string | null {
   return /^\/mesa\/([a-z0-9]{6,12})\/?$/.exec(location.pathname)?.[1] ?? null;
 }
 
+/**
+ * Reads a table code out of what a person typed or pasted: the bare code in any case, with stray
+ * spaces, or a whole `/mesa/<code>` link. Null when it can't be a table code.
+ */
+export function parseRoomCode(input: string): string | null {
+  const linked = /\/mesa\/([a-z0-9]{6,12})(?![a-z0-9])/i.exec(input)?.[1];
+  const code = (linked ?? input).replace(/\s+/g, "").toLowerCase();
+  return ROOM_PATTERN.test(code) ? code : null;
+}
+
 export function goToRoom(room: string | null): void {
   history.pushState(null, "", room ? `/mesa/${room}` : "/");
 }
 
+async function call(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch {
+    throw new Error("No hay conexión. Inténtalo otra vez.");
+  }
+}
+
 async function requestRoom(path: string): Promise<string> {
-  const res = await fetch(path, { method: "POST" });
+  const res = await call(path, { method: "POST" });
   if (!res.ok) throw new Error(`No se pudo conseguir una mesa (${res.status}).`);
   const { room } = (await res.json()) as { room: string };
   return room;
+}
+
+/** Whether a table with this code has ever been opened (and hasn't since expired). */
+export async function roomExists(room: string): Promise<boolean> {
+  const res = await call(`/api/mesa/${room}`);
+  if (!res.ok) throw new Error(`No se pudo revisar la mesa (${res.status}).`);
+  return ((await res.json()) as { exists: boolean }).exists;
 }
 
 export const findOpenRoom = () => requestRoom("/api/mesa-abierta");

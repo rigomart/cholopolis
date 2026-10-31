@@ -242,18 +242,29 @@ select {
   margin-bottom: 0.45rem;
 }
 
-.gate-row {
-  display: flex;
-  gap: 0.5rem;
+.gate-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 0.5rem 0.75rem;
 }
 
-.gate-row input {
-  flex: 1;
+.gate-fields input {
+  width: 100%;
   font-size: 1.15rem;
   background: color-mix(in srgb, var(--ink) 85%, transparent);
 }
 
-.gate-row button {
+.gate-fields input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.gate-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.gate-actions button {
   font-size: 1.1rem;
   padding-inline: 1.4em;
 }
@@ -278,6 +289,16 @@ select {
 
   .gate .wordmark {
     font-size: 19vw;
+  }
+
+  .gate-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .gate-actions button {
+    flex: 1;
+    font-size: 1rem;
+    padding-inline: 0.6em;
   }
 }
 

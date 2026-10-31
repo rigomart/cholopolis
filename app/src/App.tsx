@@ -55,9 +55,14 @@ export function App() {
     setSeat({ room: next, name });
   };
 
-  const enter = async (name: string) => {
+  const enter = async (name: string, code: string | null) => {
     saveName(name);
-    sit(room ?? (await findOpenRoom()), name);
+    sit(code ?? (await findOpenRoom()), name);
+  };
+
+  const create = async (name: string) => {
+    saveName(name);
+    sit(await createRoom(), name);
   };
 
   const newRoom = async () => {
@@ -77,7 +82,7 @@ export function App() {
       {seat ? (
         <TableView key={seat.room} seat={seat} scene={scene} onNewRoom={newRoom} onHome={home} />
       ) : (
-        <NameGate room={room} onEnter={enter} />
+        <NameGate room={room} onEnter={enter} onCreate={create} />
       )}
     </>
   );

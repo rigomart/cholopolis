@@ -65,6 +65,11 @@ export class Table extends DurableObject<Env> {
     });
   }
 
+  /** Whether anyone has opened this table and it hasn't expired. */
+  exists(): boolean {
+    return this.room !== "";
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const token = url.searchParams.get("token") ?? "";

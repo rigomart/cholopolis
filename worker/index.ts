@@ -16,6 +16,14 @@ export default {
       return Response.json({ room: await lobby(env).newRoom() });
     }
 
+    const lookup = request.method === "GET" ? /^\/api\/mesa\/([^/]+)$/.exec(url.pathname) : null;
+    if (lookup) {
+      const room = lookup[1] ?? "";
+      if (!ROOM_PATTERN.test(room)) return new Response("Código inválido", { status: 400 });
+      const exists = await env.TABLE.get(env.TABLE.idFromName(room)).exists();
+      return Response.json({ exists }, { headers: { "Cache-Control": "no-store" } });
+    }
+
     const match = /^\/ws\/([^/]+)$/.exec(url.pathname);
     if (match?.[1] && ROOM_PATTERN.test(match[1])) {
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Se esperaba WebSocket", { status: 426 });
