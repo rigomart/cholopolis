@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { SALIDA_BONUS } from "../../../shared/board.ts";
 import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
@@ -7,6 +6,8 @@ import { money, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts"
 import { playMeow } from "../audio.ts";
 import { Atmosphere } from "./atmosphere.ts";
 import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
+import { CameraRig } from "./CameraRig.ts";
+import { FOV, HOME_DISTANCE, spotView, type ViewName } from "./cameraViews.ts";
 import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
@@ -18,10 +19,8 @@ import { registerThumbnails } from "./thumbnails.ts";
 
 const THICKNESS = 0.35;
 const TOP = THICKNESS;
-const CAMERA_DIRECTION = new THREE.Vector3(0, 15.5, 13.5).normalize();
-/** Aim below the centre so the board sits above the action dock. */
-const HOME_TARGET = new THREE.Vector3(0, 0, 1.7);
-const CAMERA_DISTANCE = 21;
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_PX = 30;
 const THUMB_SIZE = 160;
 
 interface Hop {
@@ -101,8 +100,8 @@ function crowdScale(count: number): number {
 export class BoardScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
-  private readonly controls: OrbitControls;
+  private readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 200);
+  private readonly rig: CameraRig;
   private readonly board: THREE.Mesh;
   private readonly boardCanvas = document.createElement("canvas");
   private readonly boardTexture: THREE.CanvasTexture;
@@ -122,9 +121,13 @@ export class BoardScene {
   private snapNext = false;
   private seenMove = 0;
   private lastFrame = 0;
-  private cameraTween: { from: THREE.Vector3; fromTarget: THREE.Vector3; start: number } | null = null;
   private pickHandler: ((square: number) => void) | null = null;
   private pointerDown: { x: number; y: number } | null = null;
+  private lastTap: { at: number; x: number; y: number } | null = null;
+  private pendingPick: ReturnType<typeof setTimeout> | undefined;
+  private diceFinger: { id: number; x: number; y: number } | null = null;
+  private replaying = false;
+  private walksAwaitingDice: { view: PieceView; squares: THREE.Vector3[] }[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -137,15 +140,7 @@ export class BoardScene {
     this.scene.background = new THREE.Color(INK);
     this.scene.fog = new THREE.Fog(INK, 32, 70);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.enablePan = false;
-    this.controls.minDistance = 4;
-    this.controls.maxDistance = 34;
-    this.controls.maxPolarAngle = 1.25;
-    this.controls.autoRotateSpeed = 0.6;
-    this.controls.zoomToCursor = true;
-    this.controls.target.copy(HOME_TARGET);
+    this.rig = new CameraRig(this.camera, this.renderer.domElement, this.reducedMotion);
 
     const hemisphere = new THREE.HemisphereLight("#fff3e0", "#3a2a80", 1.25);
     this.scene.add(hemisphere);
@@ -194,7 +189,7 @@ export class BoardScene {
     this.scene.add(buildRim());
     this.atmosphere = new Atmosphere(
       this.scene,
-      { hemisphere, sun, boardFace: face, onNight: setWindowGlow, fogTunedAt: CAMERA_DISTANCE },
+      { hemisphere, sun, boardFace: face, onNight: setWindowGlow, fogTunedAt: HOME_DISTANCE },
       TOP,
       this.reducedMotion,
     );
@@ -207,7 +202,7 @@ export class BoardScene {
     this.ring.visible = false;
     this.scene.add(this.ring);
 
-    this.dice = new DiceRig(this.scene, this.camera, this.renderer.domElement, this.controls);
+    this.dice = new DiceRig(this.scene, this.camera, this.renderer.domElement, this.rig.controls);
     this.cats = new Cats(this.scene, {
       reducedMotion: this.reducedMotion,
       occupied: (square) => Boolean(this.state?.players.some((p) => !p.bankrupt && p.position === square)),
@@ -224,17 +219,24 @@ export class BoardScene {
     canvas.addEventListener(
       "pointerdown",
       (e) => {
-        this.pointerDown = { x: e.clientX, y: e.clientY };
+        if (this.replaying) return;
+        if (!e.isPrimary && this.diceFinger && this.dice.held) return this.handDiceToCamera();
+        this.pointerDown = e.isPrimary ? { x: e.clientX, y: e.clientY } : null;
         if (!this.dice.pointerDown(e)) return;
         e.stopImmediatePropagation();
         e.preventDefault();
+        if (e.pointerType === "touch") this.diceFinger = { id: e.pointerId, x: e.clientX, y: e.clientY };
         this.pointerDown = null;
-        this.cameraTween = null;
+        this.rig.stop();
       },
       { capture: true },
     );
-    canvas.addEventListener("pointermove", (e) => this.dice.pointerMove(e));
+    canvas.addEventListener("pointermove", (e) => {
+      if (this.diceFinger?.id === e.pointerId) Object.assign(this.diceFinger, { x: e.clientX, y: e.clientY });
+      this.dice.pointerMove(e);
+    });
     canvas.addEventListener("pointerup", (e) => {
+      if (this.diceFinger?.id === e.pointerId) this.diceFinger = null;
       if (!this.dice.pointerUp(e)) this.pick(e);
     });
     canvas.addEventListener("pointercancel", () => {
@@ -246,8 +248,53 @@ export class BoardScene {
     canvas.addEventListener("pointerleave", () => {
       if (!this.dice.held) canvas.style.cursor = "";
     });
+    addEventListener("keydown", this.onKey);
     this.renderer.setAnimationLoop((time) => this.frame(time));
   }
+
+  /** OrbitControls only tracks pointers it saw go down, so the dice finger is replayed to it as a fresh touch. */
+  private handDiceToCamera(): void {
+    const finger = this.diceFinger;
+    this.diceFinger = null;
+    this.pointerDown = null;
+    this.dice.cancel();
+    if (!finger) return;
+    this.replaying = true;
+    try {
+      this.renderer.domElement.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          pointerId: finger.id,
+          pointerType: "touch",
+          isPrimary: true,
+          clientX: finger.x,
+          clientY: finger.y,
+          button: 0,
+          buttons: 1,
+          bubbles: true,
+        }),
+      );
+    } finally {
+      this.replaying = false;
+    }
+  }
+
+  private readonly onKey = (e: KeyboardEvent): void => {
+    if (this.state?.phase !== "playing" || e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
+    const typing = e.target instanceof HTMLElement && e.target.closest("input, textarea, select, [contenteditable]");
+    if (typing || this.dice.held) return;
+    const actions: Record<string, () => void> = {
+      ArrowLeft: () => this.rotateCamera(-1),
+      ArrowRight: () => this.rotateCamera(1),
+      "+": () => this.zoomCamera(1),
+      "=": () => this.zoomCamera(1),
+      "-": () => this.zoomCamera(-1),
+      "0": () => this.showView("tablero"),
+    };
+    const action = actions[e.key];
+    if (!action) return;
+    e.preventDefault();
+    action();
+  };
 
   onPick(handler: ((square: number) => void) | null): void {
     this.pickHandler = handler;
@@ -257,8 +304,10 @@ export class BoardScene {
     this.dice.cancel();
     registerThumbnails(null);
     this.renderer.setAnimationLoop(null);
+    removeEventListener("keydown", this.onKey);
+    clearTimeout(this.pendingPick);
     this.observer.disconnect();
-    this.controls.dispose();
+    this.rig.dispose();
     this.effects.dispose();
     this.cats.dispose();
     this.atmosphere.dispose();
@@ -272,10 +321,10 @@ export class BoardScene {
     const previousTurn = this.state?.turn;
     const previousRoll = this.state?.rollId;
     // The lobby slowly circles the board; when play starts, glide back to the standard view.
-    if (state?.phase === "playing" && this.state?.phase === "lobby") this.resetCamera();
+    if (state?.phase === "playing" && this.state?.phase === "lobby" && !this.dice.held) this.rig.home(true);
     this.state = state;
     this.atmosphere.sync(state);
-    this.controls.autoRotate = !this.reducedMotion && (!state || state.phase !== "playing");
+    this.rig.controls.autoRotate = !this.reducedMotion && (!state || state.phase !== "playing");
     const snap = state !== null && (this.snapNext || !previous || skipsAhead(previous, state));
     this.dice.sync(state, snap);
     if (!state) return this.syncPieces(null, true);
@@ -327,6 +376,57 @@ export class BoardScene {
     return this.dice.landed(rollId);
   }
 
+  // ---------------------------------------------------------------- camera
+
+  /** Runs with the named view on screen, or null once the player moved the camera off it. */
+  onCameraView(handler: ((view: ViewName | null) => void) | null): void {
+    this.rig.onView = handler;
+    handler?.(this.rig.name);
+  }
+
+  /** "ficha" frames `playerId`'s pawn. */
+  showView(view: ViewName, playerId?: string | null): void {
+    // Moving the camera under held dice would yank them away from the pointer.
+    if (this.dice.held) return;
+    if (view === "tablero") this.rig.home();
+    else if (view === "arriba") this.rig.top();
+    else if (playerId) this.focusPlayer(playerId, "ficha");
+  }
+
+  /** Glides to a square, from outside its side so its name reads the right way up. */
+  focusSquare(index: number): void {
+    if (this.dice.held) return;
+    const spot = squareCenter(index);
+    this.rig.go({ name: null, frame: (aspect) => spotView(aspect, spot, index) });
+  }
+
+  /** `as` is the view reported to onCameraView while this framing holds. */
+  focusPlayer(playerId: string, as: ViewName | null = null): void {
+    const view = this.pieces.get(playerId);
+    const player = this.state?.players.find((p) => p.id === playerId);
+    if (this.dice.held || !view || !player) return;
+    const spotWhenFocused = { x: view.mesh.position.x, z: view.mesh.position.z };
+    this.rig.go({ name: as, frame: (aspect) => spotView(aspect, spotWhenFocused, player.position) });
+  }
+
+  /** A quarter turn of the board: 1 clockwise on screen, -1 the other way. */
+  rotateCamera(dir: 1 | -1): void {
+    if (!this.dice.held) this.rig.rotate(dir);
+  }
+
+  zoomCamera(dir: 1 | -1): void {
+    if (!this.dice.held) this.rig.zoom(dir);
+  }
+
+  /** Whether the camera follows a pawn that walks out of view ("Seguir la jugada"); remembered on this device. */
+  get followPlay(): boolean {
+    return this.rig.followPlay;
+  }
+
+  setFollowPlay(on: boolean): void {
+    this.rig.setFollowPlay(on);
+  }
+
   // ---------------------------------------------------------------- pieces
 
   /** Where a player's piece is on screen (CSS pixels from the board's top left), or null when it is off screen or gone. */
@@ -361,6 +461,7 @@ export class BoardScene {
     const newMoves = state && !snap ? state.moves.filter((m) => m.id > this.seenMove) : [];
     if (state) this.seenMove = Math.max(this.seenMove, ...state.moves.map((m) => m.id));
 
+    this.walksAwaitingDice = this.walksAwaitingDice.filter((w) => [...this.pieces.values()].includes(w.view));
     for (const p of players) {
       const here = bySquare.get(p.position) ?? [p.id];
       const rest = vec(pieceSpot(p.position, here.indexOf(p.id), here.length));
@@ -381,7 +482,9 @@ export class BoardScene {
       }
       const hopMs = this.reducedMotion ? 60 : 190;
       const { mesh } = view;
-      for (const move of newMoves.filter((m) => m.playerId === p.id)) {
+      const moves = newMoves.filter((m) => m.playerId === p.id);
+      const walkFrom = view.queue.length;
+      for (const move of moves) {
         view.waitUntil = Math.max(view.waitUntil, walkAfter);
         if (move.steps === null) {
           view.queue.push({ to: vec(pieceSpot(move.to, 0, 1)), ms: 700, height: 2.2 });
@@ -398,6 +501,7 @@ export class BoardScene {
       }
       const last = view.queue.at(-1)?.to ?? view.hop?.to ?? view.mesh.position;
       if (last.distanceTo(rest) > 0.01) view.queue.push({ to: rest, ms: 160, height: 0.12 });
+      if (moves.length > 0) this.walksAwaitingDice.push({ view, squares: view.queue.slice(walkFrom).map((h) => h.to) });
     }
   }
 
@@ -488,7 +592,7 @@ export class BoardScene {
     return snapshotScene(
       this.renderer,
       this.scene,
-      this.camera.position.distanceTo(this.controls.target),
+      this.camera.position.distanceTo(this.rig.controls.target),
       width,
       height,
     );
@@ -555,10 +659,20 @@ export class BoardScene {
     this.animatePieces(now, dt);
     this.cats.update(dt, this.dice.positions);
     this.effects.update(now);
-    this.atmosphere.update(now, dt, this.camera.position.distanceTo(this.controls.target));
-    this.animateCamera(now);
-    if (!this.dice.held) this.controls.update();
+    this.followWalks(now);
+    this.rig.update(now, dt, this.dice.held);
+    this.atmosphere.update(now, dt, this.camera.position.distanceTo(this.rig.controls.target));
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private followWalks(now: number): void {
+    if (this.walksAwaitingDice.length === 0) return;
+    const ready = this.walksAwaitingDice.filter((w) => now >= w.view.waitUntil);
+    this.walksAwaitingDice = this.walksAwaitingDice.filter((w) => !ready.includes(w));
+    for (const { view, squares } of ready) {
+      const pawn = () => (view.hop || view.queue.length > 0 ? view.mesh.position : null);
+      this.rig.walk(squares, pawn, this.dice.held);
+    }
   }
 
   private resize(): void {
@@ -568,41 +682,9 @@ export class BoardScene {
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
-    this.controls.maxDistance = Math.max(34, this.homePosition().distanceTo(HOME_TARGET) * 1.25);
-    this.camera.position.copy(this.homePosition());
     this.camera.updateProjectionMatrix();
+    this.rig.resize();
     this.atmosphere.resize(h * this.renderer.getPixelRatio(), this.camera);
-  }
-
-  private homePosition(): THREE.Vector3 {
-    // Portrait screens need to back off so the whole board fits across.
-    const distance = CAMERA_DISTANCE * Math.max(1, 1.1 / this.camera.aspect);
-    return CAMERA_DIRECTION.clone().multiplyScalar(distance).add(HOME_TARGET);
-  }
-
-  resetCamera(): void {
-    // Moving the camera under held dice would yank them away from the pointer.
-    if (this.dice.held) return;
-    this.cameraTween = {
-      from: this.camera.position.clone(),
-      fromTarget: this.controls.target.clone(),
-      start: performance.now(),
-    };
-  }
-
-  private animateCamera(now: number): void {
-    const tween = this.cameraTween;
-    if (!tween) return;
-    const t = this.reducedMotion ? 1 : Math.min(1, (now - tween.start) / 1200);
-    const e = easeOut(t);
-    // Swing around the board rather than cutting through it: interpolate on a sphere.
-    const from = tween.from.clone().sub(tween.fromTarget);
-    const to = this.homePosition().sub(HOME_TARGET);
-    const radius = THREE.MathUtils.lerp(from.length(), to.length(), e);
-    const direction = new THREE.Vector3().lerpVectors(from.normalize(), to.normalize(), e).normalize();
-    this.controls.target.lerpVectors(tween.fromTarget, HOME_TARGET, e);
-    this.camera.position.copy(direction.multiplyScalar(radius).add(this.controls.target));
-    if (t >= 1) this.cameraTween = null;
   }
 
   private pointerRay(e: PointerEvent): THREE.Raycaster {
@@ -620,12 +702,26 @@ export class BoardScene {
     const down = this.pointerDown;
     this.pointerDown = null;
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+    const now = performance.now();
+    const last = this.lastTap;
+    const double =
+      last !== null &&
+      now - last.at < DOUBLE_TAP_MS &&
+      Math.hypot(e.clientX - last.x, e.clientY - last.y) < DOUBLE_TAP_PX;
+    this.lastTap = double ? null : { at: now, x: e.clientX, y: e.clientY };
     const ray = this.pointerRay(e);
     if (this.cats.poke(ray.ray)) playMeow();
-    if (!this.pickHandler) return;
     const hit = ray.intersectObject(this.board)[0];
-    if (!hit) return;
-    const square = squareAt({ x: hit.point.x, z: hit.point.z });
-    if (square !== null) this.pickHandler(square);
+    const square = hit ? squareAt({ x: hit.point.x, z: hit.point.z }) : null;
+    clearTimeout(this.pendingPick);
+    if (double && this.state?.phase === "playing") {
+      if (square !== null) this.focusSquare(square);
+      else this.showView("tablero");
+      return;
+    }
+    if (square === null) return;
+    const deedCoversBoard = e.pointerType === "touch" || matchMedia("(max-width: 900px)").matches;
+    if (deedCoversBoard) this.pendingPick = setTimeout(() => this.pickHandler?.(square), DOUBLE_TAP_MS);
+    else this.pickHandler?.(square);
   }
 }

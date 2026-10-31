@@ -606,18 +606,76 @@ input[type="checkbox"] {
   pointer-events: auto;
 }
 
-.camera-reset {
+.camera-control {
   position: absolute;
   top: 1rem;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.camera-control > button {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
   min-width: 44px;
   min-height: 44px;
-  font-size: 0.85rem;
+  padding-inline: 0.65rem;
+  font-size: 0.9rem;
+}
+
+.camera-control > button.flip svg {
+  transform: scaleX(-1);
+}
+
+.camera-menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14.5rem;
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.55rem;
+  border-radius: var(--radius);
+  background: var(--black);
+  box-shadow:
+    var(--pinstripe),
+    0 14px 30px -14px #000d;
+}
+
+.camera-menu button {
+  min-height: 44px;
+  text-align: left;
+}
+
+.camera-menu .check {
+  min-height: 44px;
+  padding-inline: 0.6rem;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.camera-menu input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--yellow);
+}
+
+.camera-menu p {
+  margin: 0;
+  padding: 0 0.6rem 0.2rem;
+  font-size: 0.8rem;
+}
+
+.players .player {
+  -webkit-touch-callout: none;
 }
 
 .players {
@@ -1471,19 +1529,23 @@ body:has(.hud) .banner.board-off {
     padding: 0.4em 0.8em;
   }
 
-  .camera-reset {
+  .camera-control {
     top: calc(max(0.5rem, env(safe-area-inset-top)) + var(--players-h));
     left: 0.5rem;
     transform: none;
-    padding: 0.5rem;
   }
 
-  .camera-reset span {
+  .camera-control .camera-label {
     display: none;
   }
 
-  .hud:has(.camera-reset) .log {
-    width: min(20rem, calc(100% - 4.5rem));
+  .camera-menu {
+    left: 0;
+    transform: none;
+  }
+
+  .hud:has(.camera-control) .log {
+    width: min(20rem, calc(100% - 11.5rem));
   }
 
   .players {

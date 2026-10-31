@@ -39,6 +39,25 @@ Classic Monopoly with these choices:
   rematch: the table goes back to its lobby with the same players, pieces, colors, host and
   length, and fresh cash and board. Players who left lose their seat; spectators can sit.
 
+## Camera
+
+Drag to turn the board, pinch or scroll to zoom, and pan with two fingers, a right-drag or
+a shift-drag; the board never slides out of reach. Let go and the board settles square onto
+the nearest side, so the street names read straight. The control at the top turns it one side
+per tap (⟲ ⟳) and picks a view: "Tablero" (the standing view), "Desde arriba" (straight down,
+every name and price readable) or "Mi ficha" (close on your pawn; spectators get the pawn
+whose turn it is). Double-tap a square to glide to it, or anywhere off the squares to go back
+to the board. Tapping a player in the list glides to their pawn; holding it (or right-clicking)
+proposes them a trade. On a keyboard: ← → turn, + − zoom, 0 back to the board.
+
+"Seguir la jugada" (in the same control, remembered on the device, on by default on phones)
+pans along with a pawn whose walk leaves the screen and goes back to your view afterwards. It
+never moves the camera while you touch the board or hold the dice, nor with reduced motion.
+Picking up the dice always wins over turning the board, and a second finger on the board turns
+a pickup into a pinch. Resizing the window (a phone's address bar or keyboard) keeps your view.
+`BoardScene` exposes `focusSquare(index)` and `focusPlayer(id)` for other features to point
+the camera.
+
 ## Postcard
 
 The end screen has a "Compartir postal" button for everyone at the table, spectators too.
