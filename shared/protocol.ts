@@ -47,7 +47,10 @@ function parseAction(v: unknown): Action | null {
     case "payJailFine":
     case "useJailCard":
     case "bankrupt":
+    case "addBot":
       return { type: v.type };
+    case "removeBot":
+      return typeof v.player === "string" ? { type: "removeBot", player: v.player } : null;
     case "roll": {
       if (v.rollId !== undefined && !isCount(v.rollId)) return null;
       // The toss is cosmetic, so one that doesn't parse (or an older client's `toss`) is dropped

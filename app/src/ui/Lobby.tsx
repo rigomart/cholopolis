@@ -19,6 +19,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
   if (!state) return null;
   const me = findPlayer(state, you);
   const host = findPlayer(state, state.hostId);
+  const hosting = me !== undefined && me.id === state.hostId;
   const present = state.players.filter((p) => p.connected).length;
   const link = `${location.origin}/mesa/${room}`;
 
@@ -34,7 +35,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
         <Wordmark small />
         <h2 id="lobby-title">Mesa {room}</h2>
         <p class="muted">
-          {present} de {MAX_PLAYERS} jugadores. Pasa el enlace para que entren tus amigos.
+          {present} de {MAX_PLAYERS} jugadores. Pasa el enlace para que entren tus amigos, o completa la mesa con bots.
         </p>
         <div class="share">
           <input readOnly value={link} aria-label="Enlace de la mesa" onFocus={(e) => e.currentTarget.select()} />
@@ -52,10 +53,26 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
                 {p.id === you && <span class="muted"> (tú)</span>}
               </span>
               {p.id === state.hostId && <span class="tag">abre la partida</span>}
+              {p.bot && <span class="tag">bot</span>}
               {!p.connected && <span class="muted">desconectado</span>}
+              {p.bot && hosting && (
+                <button
+                  type="button"
+                  class="link"
+                  aria-label={`Sacar a ${p.name}`}
+                  onClick={() => send({ type: "action", action: { type: "removeBot", player: p.id } })}
+                >
+                  Sacar
+                </button>
+              )}
             </li>
           ))}
         </ul>
+        {hosting && state.players.length < MAX_PLAYERS && (
+          <button type="button" class="add-bot" onClick={() => send({ type: "action", action: { type: "addBot" } })}>
+            Agregar bot
+          </button>
+        )}
 
         {me && (
           <fieldset class="pieces">
@@ -82,7 +99,7 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
         )}
 
         {me ? (
-          me.id === state.hostId ? (
+          hosting ? (
             <button
               type="button"
               class="primary big"

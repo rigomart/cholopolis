@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { MAX_PLAYERS } from "../shared/board.ts";
+import { botMove } from "../shared/bots.ts";
 import { TURN_MS, turnLimit } from "../shared/clock.ts";
 import {
   act,
@@ -19,6 +20,7 @@ import {
   toPublic,
 } from "../shared/game.ts";
 import { MAX_MESSAGE_BYTES, parseClientMessage, type ServerMessage } from "../shared/protocol.ts";
+import { alarmTask, nextAlarm, nextBotAt } from "./alarm.ts";
 import { MessageBudget } from "./rateLimit.ts";
 
 interface Attachment {
@@ -27,8 +29,6 @@ interface Attachment {
   name: string | null;
 }
 
-/** An abandoned table forgets everything after this long. */
-const EXPIRE_MS = 24 * 60 * 60_000;
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 5_000;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
@@ -47,6 +47,7 @@ export class Table extends DurableObject<Env> {
   private room = "";
   /** What the current deadline is waiting for; a new value restarts the clock. */
   private waitingOn = "";
+  private botAt: number | null = null;
   private reportedOpen: boolean | null = null;
   private readonly actions = new MessageBudget(RATE_LIMIT, RATE_WINDOW_MS);
   private readonly drags = new MessageBudget(80, RATE_WINDOW_MS);
@@ -60,6 +61,7 @@ export class Table extends DurableObject<Env> {
       this.tokens = (await ctx.storage.get<Record<string, string>>("tokens")) ?? {};
       this.room = (await ctx.storage.get<string>("room")) ?? "";
       this.waitingOn = (await ctx.storage.get<string>("waitingOn")) ?? "";
+      this.botAt = (await ctx.storage.get<number | null>("botAt")) ?? null;
     });
   }
 
@@ -162,27 +164,53 @@ export class Table extends DurableObject<Env> {
     await this.commit(() => {}, ws);
   }
 
+  /** Durable Objects get one alarm, so it serves the turn clock, bot moves and table expiry. */
   async alarm(): Promise<void> {
-    const sockets = this.sockets();
-    if (sockets.length === 0) {
-      await this.ctx.storage.deleteAll();
-      await this.report(false);
-      this.game = createGame();
-      this.tokens = {};
-      this.room = "";
-      this.waitingOn = "";
-      return;
-    }
-    const deadline = this.game.deadline;
-    if (this.game.phase === "playing" && deadline !== null && Date.now() >= deadline - 250) {
-      this.waitingOn = "";
-      await this.commit((g) => autoPlay(g, rng));
-    } else {
-      await this.schedule();
+    const task = alarmTask({
+      sockets: this.sockets().length,
+      deadline: this.game.phase === "playing" ? this.game.deadline : null,
+      botAt: this.botAt,
+      now: Date.now(),
+    });
+    switch (task) {
+      case "expire":
+        await this.ctx.storage.deleteAll();
+        await this.report(false);
+        this.game = createGame();
+        this.tokens = {};
+        this.room = "";
+        this.waitingOn = "";
+        this.botAt = null;
+        return;
+      case "bot":
+        return await this.playBot();
+      case "clock":
+        this.waitingOn = "";
+        return await this.commit((g) => autoPlay(g, rng));
+      case "wait":
+        return await this.schedule();
     }
   }
 
   // ---------------------------------------------------------------- internals
+
+  private async playBot(): Promise<void> {
+    const due = this.botAt;
+    this.botAt = null;
+    try {
+      await this.commit((g) => {
+        const move = botMove(g);
+        if (move) act(g, move.playerId, move.action, rng);
+      });
+    } catch (error) {
+      if (!(error instanceof GameError)) {
+        this.botAt = due;
+        throw error;
+      }
+      console.error("Bot move refused, retrying shortly:", error.message);
+      await this.commit(() => {});
+    }
+  }
 
   private sockets(except?: WebSocket): WebSocket[] {
     return this.ctx.getWebSockets().filter((ws) => ws !== except && ws.readyState === WebSocket.OPEN);
@@ -210,10 +238,12 @@ export class Table extends DurableObject<Env> {
     this.game = draft;
 
     this.updateDeadline();
-    await this.ctx.storage.put({ game: this.game, waitingOn: this.waitingOn });
+    this.botAt = nextBotAt(botMove(this.game) !== null, this.botAt, Date.now());
+    await this.ctx.storage.put({ game: this.game, waitingOn: this.waitingOn, botAt: this.botAt });
     await this.schedule(closing);
     this.broadcast(sockets);
-    await this.report(this.game.phase === "lobby" && present.size > 0 && this.game.players.length < MAX_PLAYERS);
+    const someoneWatching = present.size > 0;
+    await this.report(this.game.phase === "lobby" && someoneWatching && this.game.players.length < MAX_PLAYERS);
   }
 
   /**
@@ -238,13 +268,14 @@ export class Table extends DurableObject<Env> {
 
   private async schedule(closing?: WebSocket): Promise<void> {
     const players = this.game.players.filter((p) => p.connected).length;
-    if (this.sockets(closing).length === 0) {
-      await this.ctx.storage.setAlarm(Date.now() + EXPIRE_MS);
-    } else if (this.game.deadline !== null && players > 0) {
-      await this.ctx.storage.setAlarm(this.game.deadline);
-    } else {
-      await this.ctx.storage.deleteAlarm();
-    }
+    const at = nextAlarm({
+      sockets: this.sockets(closing).length,
+      deadline: players > 0 ? this.game.deadline : null,
+      botAt: this.botAt,
+      now: Date.now(),
+    });
+    if (at === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(at);
   }
 
   private broadcast(sockets: WebSocket[]): void {

@@ -2,10 +2,10 @@
  * Seats bots at a table and lets them play, for testing without gathering friends.
  *   bun scripts/bots.ts <base-url> <room> [count] [--start]
  * With --start the first bot is host and starts once everyone is seated; otherwise the bots
- * join an existing lobby and wait for a human host. Bots buy what they can afford and keep
- * S/200 in reserve, roll, end turns, accept no trades, and raise money or go bankrupt in debt.
+ * join an existing lobby and wait for a human host. They play by `decide` in shared/bots.ts.
  */
-import { type Action, debtors, findPlayer, type PublicState } from "../shared/game.ts";
+import { decide } from "../shared/bots.ts";
+import { BOT_NAMES as names, findPlayer } from "../shared/game.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 
 const [base = "http://localhost:8791", room = "", countArg = "3"] = process.argv
@@ -15,28 +15,7 @@ const autoStart = process.argv.includes("--start");
 const count = Number(countArg);
 if (!room) throw new Error("Usage: bun scripts/bots.ts <base-url> <room> [count] [--start]");
 
-const names = ["Bot Chabuca", "Bot Grau", "Bot Tula", "Bot Micaela", "Bot Arguedas", "Bot Vallejo", "Bot Susana"];
 const token = () => crypto.randomUUID().replaceAll("-", "");
-
-function decide(state: PublicState, me: string): Action | null {
-  const p = findPlayer(state, me);
-  if (!p || p.bankrupt || state.phase !== "playing") return null;
-  if (p.cash < 0) {
-    const sellable = state.props.findIndex((x) => x?.owner === me && x.houses > 0);
-    if (sellable !== -1) return { type: "sell", square: sellable };
-    const mortgageable = state.props.findIndex((x) => x?.owner === me && !x.mortgaged);
-    return mortgageable !== -1 ? { type: "mortgage", square: mortgageable } : { type: "bankrupt" };
-  }
-  if (debtors(state).length > 0 || state.turn?.playerId !== me) return null;
-  switch (state.turn.stage) {
-    case "roll":
-      return { type: "roll" };
-    case "buy":
-      return p.cash > 260 ? { type: "buy" } : { type: "decline" };
-    case "done":
-      return { type: "endTurn" };
-  }
-}
 
 const url = `${base.replace(/^http/, "ws")}/ws/${room}`;
 for (let n = 0; n < count; n++) {

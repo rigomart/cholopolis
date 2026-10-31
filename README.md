@@ -5,8 +5,9 @@ Live at https://cholopolis.rigos.dev.
 
 Open the page, type a name, press Entrar. The home page seats you at a table that is
 waiting for players, or opens a new one; each table has a shareable link (`/mesa/<id>`).
-Whoever opened the table starts the game once at least two players are in. People who
-arrive after the start, or when all 8 seats are taken, watch as spectators.
+Whoever opened the table starts the game once at least two players are in, and can fill
+empty seats with bots ("Agregar bot") to play right away. People who arrive after the
+start, or when all 8 seats are taken, watch as spectators.
 
 ## Rules
 
@@ -28,6 +29,8 @@ Classic Monopoly with these choices:
 - A player who stays disconnected through 3 turns in a row that time out forfeits: they
   go bankrupt to the bank and their properties go back on the market. Acting or
   reconnecting resets the count.
+- Bots roll, buy when the price leaves them S/260, end their turn, never build, turn
+  down every trade, and in debt sell, then mortgage, then go bankrupt.
 
 ## How it works
 
@@ -38,6 +41,10 @@ Classic Monopoly with these choices:
   Clients only send intents; the table applies them through the rules and broadcasts
   the new state to every socket. Sockets use the hibernation API, and a table nobody
   has visited in 24 hours deletes itself.
+- Bots are players with a `bot` flag and no socket; they always count as present. The table
+  plays them (`shared/bots.ts` decides each move) about a second after each move is due. One
+  alarm serves the turn clock, the bots and the 24-hour expiry (`worker/alarm.ts`); with no
+  sockets open only the expiry runs, so bots never play to an empty table.
 - `app/` is the client: Preact for the panels and plain three.js for the board
   (`app/src/scene`). The board face is drawn onto a canvas texture.
 - Dice are thrown with a small deterministic physics solver (`app/src/scene/dicePhysics.ts`).
@@ -56,7 +63,8 @@ bun run dev                          # Vite with hot reload; proxies /api and /w
 bun run check                        # format, lint, typecheck, tests
 ```
 
-Fill a table with bots to test without friends:
+Add bots from the lobby, or seat bots that connect over WebSockets like a browser would,
+to test the protocol from outside:
 
 ```sh
 bun scripts/bots.ts http://localhost:8787 <room> 3           # join a lobby you opened

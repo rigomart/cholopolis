@@ -349,6 +349,10 @@ select {
   font-weight: 600;
 }
 
+.add-bot {
+  align-self: flex-start;
+}
+
 .waiting {
   color: var(--muted);
 }

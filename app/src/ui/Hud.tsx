@@ -195,6 +195,7 @@ function Players({
             <span class="player-name">
               {p.name}
               {p.id === you && <span class="muted"> (tú)</span>}
+              {p.bot && <span class="muted"> (bot)</span>}
             </span>
             <RollingCash id={p.id} cash={cash} />
             <Pips state={state} playerId={p.id} />
