@@ -70,11 +70,13 @@ function Ring({ fraction }: { fraction: number }) {
 interface ClockProps {
   state: PublicState;
   you: string | null;
+  /** Who has the dice in hand right now, if anyone. */
+  shaking: string | null;
   now: () => number;
 }
 
-/** The turn countdown for whoever the table is waiting on; the large form when that is you. */
-export function TurnClock({ state, you, now }: ClockProps) {
+/** The turn status line and countdown for whoever the table is waiting on; the large form when that is you. */
+export function TurnClock({ state, you, shaking, now }: ClockProps) {
   const countdown = useCountdown(state, now);
   const waiting = awaited(state);
   const yours = waiting.some((p) => p.id === you);
@@ -87,30 +89,26 @@ export function TurnClock({ state, you, now }: ClockProps) {
   }, [yours, seconds]);
 
   if (!countdown || waiting.length === 0) return null;
-  const time = clockText(countdown.seconds);
   const owing = debtors(state).length > 0;
-
-  if (yours) {
-    return (
-      <div class={`turn-clock mine ${countdown.level}`} role="timer">
-        <Ring fraction={countdown.fraction} />
-        <span class="turn-clock-text">
-          {owing ? "Paga tu deuda" : "Tu turno"} · <span class="turn-clock-time">{time}</span>
-        </span>
-      </div>
-    );
-  }
   const names = waiting.map((p) => p.name).join(" y ");
-  const label = waiting.every((p) => !p.connected)
-    ? `Esperando a ${names} (sin conexión)`
-    : owing
-      ? `Esperando a ${names}`
-      : `Juega ${names}`;
+  const label = yours
+    ? owing
+      ? "Paga tu deuda"
+      : "Tu turno"
+    : waiting.every((p) => !p.connected)
+      ? `Esperando a ${names} (sin conexión)`
+      : owing
+        ? `Esperando el pago de ${names}`
+        : waiting.some((p) => p.id === shaking)
+          ? `${names} está revolviendo los dados…`
+          : `Juega ${names}`;
   return (
-    <div class={`turn-clock ${countdown.level}`} role="timer">
+    <div class={`turn-clock ${yours ? "mine " : ""}${countdown.level}`} role="timer">
       <Ring fraction={countdown.fraction} />
       <span class="turn-clock-text">
-        {label} · <span class="turn-clock-time">{time}</span>
+        {/* The one live region for turn changes; your own turn already has the banner. The ticking time stays outside it. */}
+        <span aria-live={yours ? "off" : "polite"}>{label}</span> ·{" "}
+        <span class="turn-clock-time">{clockText(countdown.seconds)}</span>
       </span>
     </div>
   );
