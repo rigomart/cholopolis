@@ -37,12 +37,12 @@
   transform: translate(-50%, -50%);
   padding: 0.05rem 0.45rem;
   border-radius: 99px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--black);
   background: radial-gradient(circle at 35% 30%, #fff6b0, var(--yellow) 45%, #d9a400);
-  color: var(--ink);
+  color: var(--black);
   font-size: 0.72rem;
   font-weight: 800;
-  box-shadow: 0 3px 0 var(--ink);
+  box-shadow: 0 3px 0 var(--black);
   animation: coin-pop var(--fly) ease-out var(--delay) both;
 }
 
@@ -82,8 +82,8 @@
   font-size: 0.85rem;
   font-weight: 800;
   text-shadow:
-    0 1px 0 var(--ink),
-    0 0 6px var(--ink);
+    0 1px 0 var(--black),
+    0 0 6px var(--black);
   animation: cash-float 1.2s ease-out var(--delay) both;
 }
 
@@ -117,8 +117,8 @@
   transform: translate(-50%, -50%);
   padding: 0.1rem 0.55rem;
   border-radius: 99px;
-  border: 1.5px dashed var(--yellow);
-  background: color-mix(in srgb, var(--ink-2) 92%, transparent);
+  border: 2px dashed var(--yellow);
+  background: var(--black);
   color: var(--yellow);
   font-size: 0.72rem;
   font-weight: 800;

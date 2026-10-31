@@ -10,7 +10,6 @@
 .ranking-tabs {
   display: flex;
   gap: 0.4rem;
-  margin-top: 0.4rem;
 }
 
 .ranking-tabs button {
@@ -31,21 +30,34 @@
 }
 
 .leaderboard li {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0.4rem 0.7rem;
-  border: 1.5px solid var(--ink-3);
+  min-height: 44px;
+  padding: 0.4rem 0.7rem 0.4rem 0;
+  border: 2px solid var(--black);
   border-radius: var(--radius);
-  background: var(--ink);
+  background: var(--plate);
+  color: var(--plate-ink);
+}
+
+.leaderboard li .muted {
+  color: var(--plate-muted);
 }
 
 .leaderboard li.you {
-  border-color: var(--yellow);
+  background: var(--yellow);
+  box-shadow: var(--pinstripe-yellow);
+}
+
+.leaderboard li.you .muted {
+  color: #4a3a00;
 }
 
 .leaderboard li.leaderboard-gap {
   justify-content: center;
+  min-height: 0;
   border: 0;
   background: none;
   padding: 0;
@@ -53,10 +65,18 @@
 }
 
 .leaderboard-rank {
-  min-width: 1.6em;
-  font-weight: 700;
-  color: var(--muted);
-  text-align: right;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-width: 2.6rem;
+  margin: -0.4rem 0;
+  border-radius: 7px 0 0 7px;
+  border-right: 2px solid var(--black);
+  background: var(--black);
+  color: var(--text);
+  font-weight: 800;
+  font-stretch: 80%;
+  font-size: 1.1rem;
 }
 
 .leaderboard li:nth-child(1) .leaderboard-rank {
@@ -72,14 +92,18 @@
 }
 
 .leaderboard-name {
-  font-weight: 600;
+  font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .leaderboard-points {
-  font-weight: 700;
+  padding: 0 0.45em;
+  border-radius: 5px;
+  background: var(--black);
+  color: var(--yellow);
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -96,6 +120,9 @@
 
 .game-points {
   margin-top: 0.9rem;
+  padding: 0.6rem 0.75rem;
+  border: 2px dashed var(--ink-3);
+  border-radius: var(--radius);
   text-align: left;
 }
 
@@ -123,7 +150,7 @@
 }
 
 .game-points-earned {
-  font-weight: 700;
+  font-weight: 800;
   color: var(--green);
 }
 

@@ -20,8 +20,7 @@ ol.players li.out {
 
 @keyframes row-owing {
   50% {
-    border-color: var(--danger);
-    box-shadow: 0 0 12px -2px var(--danger);
+    filter: drop-shadow(0 0 7px var(--danger));
   }
 }
 
@@ -32,10 +31,10 @@ ol.players li.out {
   z-index: 1;
   min-width: 18px;
   height: 26px;
-  border-block: 2.5px solid #d6d9e4;
+  border-block: 2.5px solid var(--plate-ink);
   border-radius: 2px;
-  background: repeating-linear-gradient(90deg, transparent 0 4px, #d6d9e4 4px 6.5px);
-  filter: drop-shadow(0 1px 0 var(--ink));
+  background: repeating-linear-gradient(90deg, transparent 0 4px, var(--plate-ink) 4px 6.5px);
+  filter: drop-shadow(0 0 1px var(--plate));
   pointer-events: none;
 }
 
@@ -110,9 +109,9 @@ ol.players li.out {
   min-width: 1.4em;
   margin-left: 0.25em;
   padding: 0 0.35em;
-  border-radius: 99px;
+  border-radius: 5px;
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--black);
   font-size: 0.8em;
   font-weight: 800;
   font-variant-numeric: tabular-nums;

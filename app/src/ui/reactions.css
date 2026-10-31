@@ -131,11 +131,13 @@
 
 @media (max-width: 900px) {
   .player .reaction-bubble {
-    position: static;
+    box-shadow: 0 0 0 2px var(--black);
+    left: auto;
+    right: 0.25rem;
+    top: 0.2rem;
     translate: none;
-    grid-column: 2 / span 2;
-    justify-self: start;
-    margin-top: 0.2rem;
+    z-index: 1;
+    font-size: 0.85rem;
   }
 
   .player .reaction-bubble::before {

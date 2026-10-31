@@ -84,7 +84,9 @@ export function App() {
   return (
     <>
       <div class="scene" ref={host} />
-      {no3d && <p class="banner">Tu navegador no pudo mostrar el tablero 3D. Puedes jugar igual con los paneles.</p>}
+      {no3d && (
+        <p class="banner board-off">Tu navegador no pudo mostrar el tablero 3D. Puedes jugar igual con los paneles.</p>
+      )}
       {seat ? (
         <TableView key={seat.room} seat={seat} scene={scene} onNewRoom={newRoom} onHome={home} />
       ) : (

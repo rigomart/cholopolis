@@ -12,6 +12,7 @@ import {
   type LogEntry,
   money,
   ownedBy,
+  PLAYER_COLORS,
   type Player,
   type PublicState,
   ranking,
@@ -228,6 +229,7 @@ function Players({
         return (
           <li
             key={p.id}
+            style={{ "--seat": PLAYER_COLORS[p.color] }}
             class={[isTurn && "turn", p.bankrupt && "out", !p.connected && "away", cash < 0 && !p.bankrupt && "owing"]
               .filter(Boolean)
               .join(" ")}
@@ -365,7 +367,7 @@ function Log({ entries }: { entries: LogEntry[] }) {
       <summary>Lo que pasó</summary>
       <ol ref={list} aria-live="polite">
         {entries.slice(-40).map((e) => (
-          <li key={e.id} class={e.id > lastIdOnMount ? "fresh" : undefined}>
+          <li key={e.id} class={e.id > lastIdOnMount ? "fresh" : undefined} data-serial={String(e.id).padStart(3, "0")}>
             {e.text}
           </li>
         ))}
@@ -469,7 +471,11 @@ function Ended({
             <p class="muted">Se acabó el tiempo. Gana quien tiene más patrimonio: efectivo, propiedades y edificios.</p>
             <ol class="ranking">
               {ranking(state).map(({ player, worth }) => (
-                <li key={player.id} class={player.id === state.winnerId ? "winner" : undefined}>
+                <li
+                  key={player.id}
+                  class={player.id === state.winnerId ? "winner" : undefined}
+                  style={{ "--seat": PLAYER_COLORS[player.color] }}
+                >
                   <Pawn player={player} size={14} />
                   <span class="ranking-name">
                     {player.name}
