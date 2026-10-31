@@ -304,7 +304,7 @@ export function debtsOf(p: Player): Debt[] {
 }
 
 /** Cash a player can use: what they hold minus payments from debtors who could not cover them. */
-function spendable(g: PublicState, id: string): number {
+export function spendable(g: PublicState, id: string): number {
   let cash = findPlayer(g, id)?.cash ?? 0;
   for (const d of debtors(g)) for (const owed of debtsOf(d)) if (owed.to === id) cash -= owed.amount;
   return cash;

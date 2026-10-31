@@ -1,0 +1,579 @@
+/* ------------------------------------------------------------------ deal table */
+
+.sheet.deal {
+  width: min(32rem, 100%);
+  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.deal-head-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.deal-peek {
+  display: none;
+}
+
+.deal-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-top: 1.6rem;
+}
+
+.deal-body {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding-bottom: 1rem;
+}
+
+.deal h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-stretch: 88%;
+}
+
+.partner-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.partner-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 44px;
+  padding: 0.2rem 0.85rem 0.2rem 0.5rem;
+  background: var(--plate);
+  color: var(--plate-ink);
+  box-shadow: var(--pinstripe-plate);
+}
+
+.partner-chip:where(:hover:not(:disabled)) {
+  background: #fffdf4;
+}
+
+.partner-chip[aria-pressed="true"] {
+  background: var(--yellow);
+  color: var(--black);
+  box-shadow: var(--pinstripe-yellow);
+}
+
+.owner-map {
+  border-radius: var(--radius);
+  background: var(--black);
+  box-shadow: var(--pinstripe);
+  padding: 0.35rem 0.7rem 0.6rem;
+}
+
+.owner-map summary {
+  padding-block: 0.4rem;
+  cursor: pointer;
+  color: var(--yellow);
+  font-weight: 800;
+  font-stretch: 90%;
+}
+
+.owner-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem 0.9rem;
+}
+
+.owner-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.owner-label {
+  flex: none;
+  width: 5.6rem;
+  margin-right: 0.15rem;
+  padding: 0.05rem 0.4rem;
+  border-left: 7px solid var(--group);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.owner-slot {
+  width: 30px;
+  min-height: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--group);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--group) 22%, var(--ink));
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.owner-slot:empty {
+  border-style: dashed;
+  background: transparent;
+}
+
+.owner-slot.in-deal {
+  outline: 3px solid var(--yellow);
+  outline-offset: 1px;
+}
+
+.owner-slot .pawn {
+  margin: 0;
+}
+
+.deal-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.5rem;
+  padding: 0.8rem 0.7rem;
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 50% 40%, #1f5a43 0%, #123828 75%) padding-box,
+    var(--hazard) border-box;
+  border: 6px solid transparent;
+}
+
+.deal-swap {
+  align-self: center;
+  color: var(--yellow);
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.deal-pile {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.pile-hint {
+  margin: 0;
+  padding: 0.6rem;
+  border: 2px dashed color-mix(in srgb, var(--text) 40%, transparent);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.cash-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cash-control button {
+  min-height: 34px;
+  padding: 0.2em 0.55em;
+  font-size: 0.8rem;
+}
+
+.cash-input {
+  display: flex;
+  align-items: center;
+  flex: 1 1 5.5rem;
+  min-width: 5.5rem;
+  border: 2px solid var(--black);
+  border-radius: 8px;
+  background: var(--plate);
+  color: var(--plate-ink);
+  font-weight: 800;
+  padding-left: 0.45rem;
+}
+
+.cash-input input {
+  width: 100%;
+  border: 0;
+  box-shadow: none;
+  padding: 0.3em 0.4em 0.3em 0.15em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.6rem, 1fr));
+  gap: 0.4rem;
+}
+
+.mini-deed {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 5.6rem;
+  padding: 0;
+  border: 2px solid var(--black);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--black);
+  box-shadow: 0 6px 12px -8px #000c;
+  text-align: left;
+  font-stretch: 88%;
+  transition:
+    translate 0.08s,
+    box-shadow 0.1s;
+}
+
+.mini-deed:where(:hover:not(:disabled)) {
+  background: #e4f7ef;
+  translate: 0 -2px;
+  box-shadow:
+    0 0 0 3px var(--yellow),
+    0 8px 14px -8px #000c;
+}
+
+.mini-band {
+  display: block;
+  padding: 0.25rem 0.35rem;
+  background: var(--group);
+  border-bottom: 2px solid var(--black);
+}
+
+.mini-band span {
+  padding: 0 0.3em;
+  border-radius: 4px;
+  background: var(--paper);
+  font-size: 0.7rem;
+  font-weight: 800;
+  font-stretch: 100%;
+}
+
+.mini-name {
+  padding: 0.25rem 0.4rem 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.mini-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.2rem;
+  padding: 0 0.4rem 0.2rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-stretch: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-foot .pawn {
+  margin: -0.3rem -0.25rem -0.2rem 0;
+}
+
+.mini-deed.mortgaged .mini-name,
+.mini-deed.mortgaged .mini-foot {
+  background: repeating-linear-gradient(135deg, #c4d9d0 0 6px, transparent 6px 12px);
+}
+
+.mini-deed.blocked {
+  filter: grayscale(1);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mini-blocked {
+  justify-self: center;
+  margin: 0 0.3rem 0.3rem;
+  rotate: -3deg;
+  padding: 0 0.35rem;
+  border: 2px solid var(--black);
+  border-radius: 5px;
+  background: var(--plate);
+  font-size: 0.68rem;
+  font-weight: 800;
+  font-stretch: 100%;
+  line-height: 1.3;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.holdings-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.holdings {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+}
+
+.deal-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 -1.1rem;
+  padding: 0.75rem 1.1rem max(1rem, env(safe-area-inset-bottom));
+  background: var(--ink);
+  border-top: 2px solid var(--black);
+  box-shadow: 0 -14px 20px -14px #000c;
+}
+
+.deal-foot > .primary {
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+
+.deal-foot .form-error {
+  margin: 0;
+}
+
+.deal-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The empty live region stays in the DOM; cancel its gap. */
+.deal-foot .deal-note:empty {
+  margin-top: -0.5rem;
+}
+
+.deal-summary {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.deal-totals {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
+  margin: 0;
+  padding: 0.45rem 0.8rem;
+  border-radius: 8px;
+  background: var(--black);
+  box-shadow: var(--pinstripe);
+  color: #ffb21a;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px #ff9d0080;
+}
+
+.deal-totals strong {
+  color: var(--yellow);
+  font-size: 1.1rem;
+}
+
+.deal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge {
+  padding: 0.2rem 0.6rem 0.2rem 0.45rem;
+  border: 2px solid var(--black);
+  border-left: 9px solid var(--group);
+  border-radius: 7px;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.badge.good {
+  background: var(--green);
+  color: var(--black);
+}
+
+.badge.warn {
+  background: var(--plate);
+  color: var(--plate-ink);
+  box-shadow: inset 0 -4px 0 var(--orange);
+}
+
+.deed-ask {
+  margin-left: auto;
+  min-height: 34px;
+  padding: 0.2em 0.8em;
+  font-size: 0.85rem;
+}
+
+.offer-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.offer-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.offer-side {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+}
+
+.offer-side h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--plate-muted);
+}
+
+.offer .mini-grid {
+  grid-template-columns: repeat(auto-fill, minmax(6.4rem, 1fr));
+}
+
+.offer .mini-deed {
+  min-height: 4.8rem;
+}
+
+.offer .pile-hint {
+  color: var(--plate-muted);
+  border-color: #0003;
+}
+
+.cash-chip {
+  align-self: center;
+  justify-self: start;
+  padding: 0.25rem 0.55rem;
+  border-radius: 7px;
+  background: var(--black);
+  color: var(--yellow);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.offers .offer,
+.offers .offer * {
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.offers.locating .offer {
+  background: color-mix(in srgb, var(--plate) 12%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.offers.locating .offer > :not(.offer-sides),
+.offers.locating .offer-side h4,
+.offers.locating .cash-chip,
+.offers.locating .pile-hint,
+.offers.locating .mini-deed:not(.located) {
+  opacity: 0.12;
+}
+
+.offer .deal-summary {
+  margin-bottom: 0.5rem;
+}
+
+.offer .deal-totals {
+  font-size: 0.92rem;
+}
+
+/* ------------------------------------------------------------------ phones */
+
+@media (max-width: 700px) {
+  .sheet.deal {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .deal-peek {
+    display: inline-block;
+  }
+
+  .sheet.deal.peek {
+    top: auto;
+    overflow: visible;
+    background: none;
+    box-shadow: none;
+  }
+
+  .sheet.deal.peek .deal-body {
+    display: none;
+  }
+
+  .sheet.deal.peek .deal-form {
+    margin-top: 0;
+  }
+
+  .deal .sheet-head h2 {
+    font-size: 1.3rem;
+  }
+
+  .deal-head-actions .link {
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  .owner-rows {
+    grid-template-columns: 1fr;
+  }
+
+  .owner-slot {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .deal-table {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deal-swap {
+    justify-self: center;
+    rotate: 90deg;
+    line-height: 1;
+  }
+
+  .cash-control button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .holdings-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mini-deed {
+    min-height: 5.6rem;
+  }
+
+  .deed-ask {
+    min-height: 44px;
+  }
+
+  .offer-actions {
+    flex-wrap: wrap;
+  }
+
+  .offer-actions button {
+    min-height: 44px;
+  }
+}

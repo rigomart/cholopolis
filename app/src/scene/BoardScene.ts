@@ -12,6 +12,7 @@ import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
 import { Estates, setWindowGlow } from "./estates.ts";
+import { SquareHighlight } from "./highlight.ts";
 import { BOARD_SIZE, INNER, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
 import { buildPiece } from "./pieces.ts";
 import { snapshotScene } from "./snapshot.ts";
@@ -112,6 +113,7 @@ export class BoardScene {
   private readonly effects = new Effects(this.scene);
   private readonly estates = new Estates(this.scene, this.effects, TOP);
   private readonly atmosphere: Atmosphere;
+  private readonly highlight: SquareHighlight;
   private readonly observer: ResizeObserver;
   private readonly reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   private readonly container: HTMLElement;
@@ -193,6 +195,8 @@ export class BoardScene {
       TOP,
       this.reducedMotion,
     );
+
+    this.highlight = new SquareHighlight(this.scene, TOP, this.reducedMotion);
 
     this.ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.24, 0.035, 8, 40),
@@ -300,8 +304,17 @@ export class BoardScene {
     this.pickHandler = handler;
   }
 
+  /**
+   * Outlines squares on the board for `source`, replacing what that source outlined before; []
+   * clears it. Each source (the deal table, an offer) keeps its own outline.
+   */
+  highlightSquares(indices: readonly number[], source = ""): void {
+    this.highlight.set(source, indices);
+  }
+
   dispose(): void {
     this.dice.cancel();
+    this.highlight.dispose();
     registerThumbnails(null);
     this.renderer.setAnimationLoop(null);
     removeEventListener("keydown", this.onKey);
@@ -661,6 +674,7 @@ export class BoardScene {
     this.effects.update(now);
     this.followWalks(now);
     this.rig.update(now, dt, this.dice.held);
+    this.highlight.update(now);
     this.atmosphere.update(now, dt, this.camera.position.distanceTo(this.rig.controls.target));
     this.renderer.render(this.scene, this.camera);
   }
