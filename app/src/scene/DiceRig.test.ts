@@ -61,6 +61,17 @@ function faces(dice: { body: THREE.Group; model: THREE.Group }[]): number[] {
   });
 }
 
+function flight(listen: boolean) {
+  const { rig, dice, tosses } = setup();
+  const hits: number[] = [];
+  if (listen) rig.onImpact = (strength) => hits.push(strength);
+  rig.throwFromButton();
+  run(rig, 300);
+  rig.sync(state(1, [6, 2], tosses[0]!));
+  run(rig, rig.landsAt - clock + FRAME);
+  return { hits, resting: positions(dice) };
+}
+
 describe("our own throw", () => {
   test("flies before the server answers and lands on the values it sends", () => {
     const { rig, dice, tosses } = setup();
@@ -85,6 +96,13 @@ describe("our own throw", () => {
     run(rig, 2 * FRAME);
     expect(rig.landed(1)).toBe(true);
     expect(faces(dice)).toEqual([6, 2]);
+  });
+
+  test("reports each impact as it plays, without changing where the dice go", () => {
+    const watched = flight(true);
+    expect(watched.hits.length).toBeGreaterThan(0);
+    expect(watched.hits.every((s) => s > 0 && s <= 1)).toBe(true);
+    expect(flight(false).resting).toEqual(watched.resting);
   });
 
   test("hovers while the values are late, then flies on", () => {
