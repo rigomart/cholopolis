@@ -16,8 +16,8 @@ const STIFFNESS = 320;
 const DAMPING = 2 * Math.sqrt(STIFFNESS) * 0.72;
 const PICKUP_SECONDS = 0.16;
 /**
- * The dice leave the fingers this long after the pointer lets go, which covers the wait for the
- * server's values; the toss is where they are by then.
+ * The toss starts where the dice will be this long after the pointer lets go. They sweep from
+ * the hand into it meanwhile, already on their way, while the server rolls.
  */
 export const RELEASE_SECONDS = 0.14;
 const SLOTS = [vec(-0.36, -CUP.y + DIE / 2 + 0.01, 0.08), vec(0.36, -CUP.y + DIE / 2 + 0.01, -0.08)];
