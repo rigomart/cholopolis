@@ -4,7 +4,9 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SALIDA_BONUS } from "../../../shared/board.ts";
 import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
 import { money, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
+import { playMeow } from "../audio.ts";
 import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
+import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
 import { Estates } from "./estates.ts";
@@ -104,6 +106,7 @@ export class BoardScene {
   private readonly boardTexture: THREE.CanvasTexture;
   private readonly ring: THREE.Mesh;
   private readonly dice: DiceRig;
+  private readonly cats: Cats;
   private readonly pieces = new Map<string, PieceView>();
   private readonly effects = new Effects(this.scene);
   private readonly estates = new Estates(this.scene, this.effects, TOP);
@@ -195,6 +198,11 @@ export class BoardScene {
     this.scene.add(this.ring);
 
     this.dice = new DiceRig(this.scene, this.camera, this.renderer.domElement, this.controls);
+    this.cats = new Cats(this.scene, {
+      reducedMotion: this.reducedMotion,
+      occupied: (square) => Boolean(this.state?.players.some((p) => !p.bankrupt && p.position === square)),
+    });
+    this.dice.onImpact = (strength) => this.cats.scatter(this.dice.positions, strength);
     registerThumbnails((piece, color) => this.renderThumbnail(piece, color));
 
     this.observer = new ResizeObserver(() => this.resize());
@@ -242,6 +250,7 @@ export class BoardScene {
     this.observer.disconnect();
     this.controls.dispose();
     this.effects.dispose();
+    this.cats.dispose();
     this.thumbTarget?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -514,6 +523,7 @@ export class BoardScene {
     this.lastFrame = now;
     this.dice.animate(now, dt);
     this.animatePieces(now, dt);
+    this.cats.update(dt, this.dice.positions);
     this.effects.update(now);
     this.animateCamera(now);
     if (!this.dice.held) this.controls.update();
@@ -577,8 +587,11 @@ export class BoardScene {
   private pick(e: PointerEvent): void {
     const down = this.pointerDown;
     this.pointerDown = null;
-    if (!down || !this.pickHandler || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
-    const hit = this.pointerRay(e).intersectObject(this.board)[0];
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+    const ray = this.pointerRay(e);
+    if (this.cats.poke(ray.ray)) playMeow();
+    if (!this.pickHandler) return;
+    const hit = ray.intersectObject(this.board)[0];
     if (!hit) return;
     const square = squareAt({ x: hit.point.x, z: hit.point.z });
     if (square !== null) this.pickHandler(square);

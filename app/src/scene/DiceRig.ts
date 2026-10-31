@@ -136,6 +136,10 @@ function leadAt(lead: Lead, played: number): Waypoint[] {
  */
 export class DiceRig {
   private readonly dice: Die[] = [];
+  /** Where each die is now; the same vectors for the life of the rig. */
+  readonly positions: THREE.Vector3[] = [];
+  /** Runs for each impact of a throw as it plays, with how hard it was. Cosmetic only. */
+  onImpact: ((strength: number) => void) | null = null;
   private readonly camera: THREE.Camera;
   private readonly canvas: HTMLCanvasElement;
   private readonly controls: OrbitControls;
@@ -172,6 +176,7 @@ export class DiceRig {
       halo.visible = false;
       scene.add(body, halo);
       this.dice.push({ body, model, halo });
+      this.positions.push(body.position);
     }
   }
 
@@ -327,7 +332,10 @@ export class DiceRig {
     const index = Math.floor(frame);
     while (flight.impactIndex < flight.sim.impacts.length && flight.sim.impacts[flight.impactIndex]!.at <= seconds) {
       const hit = flight.sim.impacts[flight.impactIndex++]!;
-      if (seconds - hit.at < 0.1) playKnock(hit.strength, hit.surface);
+      if (seconds - hit.at < 0.1) {
+        playKnock(hit.strength, hit.surface);
+        this.onImpact?.(hit.strength);
+      }
     }
     if (seconds >= flight.sim.duration) {
       this.flight = null;

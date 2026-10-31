@@ -93,3 +93,28 @@ export function playReaction(): void {
   tone(0, 620, 0.05, 0.09, "sine");
   tone(0.05, 880, 0.04, 0.12, "sine");
 }
+
+/** Plays a soft meow; does nothing when muted or the audio context is not running. */
+export function playMeow(): void {
+  if (!ctx || muted || ctx.state !== "running") return;
+  const t = ctx.currentTime;
+  const pitch = 0.9 + Math.random() * 0.25;
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(520 * pitch, t);
+  osc.frequency.exponentialRampToValueAtTime(880 * pitch, t + 0.12);
+  osc.frequency.exponentialRampToValueAtTime(560 * pitch, t + 0.45);
+  const vowel = ctx.createBiquadFilter();
+  vowel.type = "bandpass";
+  vowel.Q.value = 3;
+  vowel.frequency.setValueAtTime(900, t);
+  vowel.frequency.exponentialRampToValueAtTime(1900, t + 0.14);
+  vowel.frequency.exponentialRampToValueAtTime(1000, t + 0.45);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.1, t + 0.05);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.48);
+  osc.connect(vowel).connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.5);
+}
