@@ -37,6 +37,15 @@ const LOG_LIMIT = 80;
 const TRADE_LIMIT_PER_PLAYER = 1;
 /** Turns timed out while disconnected before the seat is given up. */
 const ABANDON_AFTER_TURNS = 3;
+export const BOT_NAMES = [
+  "Bot Chabuca",
+  "Bot Grau",
+  "Bot Tula",
+  "Bot Micaela",
+  "Bot Arguedas",
+  "Bot Vallejo",
+  "Bot Susana",
+] as const;
 
 export type Rng = () => number;
 export type Stage = "roll" | "buy" | "done";
@@ -60,6 +69,8 @@ export interface Player {
    */
   debts: Debt[];
   connected: boolean;
+  /** Seated by the host and played by the table; always counts as present. */
+  bot?: boolean;
   /** Turns of theirs in a row that timed out while they were disconnected. */
   idleTurns: number;
 }
@@ -154,6 +165,8 @@ export type PublicState = Omit<GameState, "decks">;
 export type Action =
   | { type: "start" }
   | { type: "choosePiece"; piece: number }
+  | { type: "addBot" }
+  | { type: "removeBot"; player: string }
   | { type: "roll"; diceToss?: DiceToss; rollId?: number }
   | { type: "buy" }
   | { type: "decline" }
@@ -461,19 +474,43 @@ export function removePlayer(g: GameState, id: string): void {
   const p = findPlayer(g, id);
   if (!p) return;
   g.players = g.players.filter((x) => x.id !== id);
-  if (g.hostId === id) g.hostId = g.players.find((x) => x.connected)?.id ?? g.players[0]?.id ?? null;
+  if (g.hostId === id) g.hostId = g.players.find((x) => x.connected && !x.bot)?.id ?? g.players[0]?.id ?? null;
   log(g, `${p.name} se fue.`);
 }
 
-/** Marks who has an open connection; in the lobby, hands the host role to someone present. */
+/**
+ * Marks who has an open connection (bots are always present); in the lobby, hands the host role
+ * to a person who is present.
+ */
 export function syncPresence(g: GameState, connected: Set<string>): void {
   for (const p of g.players) {
-    p.connected = connected.has(p.id);
+    p.connected = Boolean(p.bot) || connected.has(p.id);
     if (p.connected) p.idleTurns = 0;
   }
-  if (g.phase === "lobby" && !findPlayer(g, g.hostId)?.connected) {
-    g.hostId = g.players.find((p) => p.connected)?.id ?? g.hostId;
+  const host = findPlayer(g, g.hostId);
+  if (g.phase === "lobby" && (!host?.connected || host.bot)) {
+    g.hostId = g.players.find((p) => p.connected && !p.bot)?.id ?? g.hostId;
   }
+}
+
+function addBot(g: GameState, playerId: string): void {
+  requireHost(g, playerId, "Solo quien abrió la mesa puede agregar bots.");
+  if (g.players.length >= MAX_PLAYERS) fail("La mesa está llena.");
+  const taken = new Set(g.players.map((p) => p.name));
+  const name = BOT_NAMES.find((n) => !taken.has(n)) ?? "Bot";
+  const bot = addPlayer(g, `bot-${g.nextId}`, name);
+  bot.bot = true;
+}
+
+function removeBot(g: GameState, playerId: string, botId: string): void {
+  requireHost(g, playerId, "Solo quien abrió la mesa puede sacar bots.");
+  if (!findPlayer(g, botId)?.bot) fail("Ese jugador no es un bot.");
+  removePlayer(g, botId);
+}
+
+function requireHost(g: GameState, playerId: string, message: string): void {
+  if (g.phase !== "lobby") fail("La partida ya empezó.");
+  if (g.hostId !== playerId) fail(message);
 }
 
 export function cleanName(raw: string): string {
@@ -500,6 +537,8 @@ export function act(g: GameState, playerId: string, action: Action, rng: Rng): v
   g.moves = [];
   if (action.type === "start") return start(g, playerId, rng);
   if (action.type === "choosePiece") return choosePiece(g, playerId, action.piece);
+  if (action.type === "addBot") return addBot(g, playerId);
+  if (action.type === "removeBot") return removeBot(g, playerId, action.player);
   if (g.phase !== "playing") fail("La partida no está en curso.");
   const p = player(g, playerId);
   if (p.bankrupt) fail("Estás en quiebra.");
@@ -963,9 +1002,9 @@ export function autoPlay(g: GameState, rng: Rng): void {
   p.idleTurns = idleTurns;
 }
 
-/** Whether the table is playing for them because nobody is at their seat. */
+/** Whether the table is playing for them because nobody is at their seat. Bots never are. */
 function isAway(p: Player): boolean {
-  return !p.connected;
+  return !p.connected && !p.bot;
 }
 
 /** Sells buildings, then mortgages, until the debt is covered or nothing is left. */
