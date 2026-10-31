@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { playBuildSound } from "../audio.ts";
 import { INK } from "./boardTexture.ts";
+import { BUILDING_MATERIAL, hotelGeometry, houseGeometry } from "./buildings.ts";
 import {
   type BuildingParts,
   type Construction,
@@ -312,25 +313,15 @@ export function setWindowGlow(night: number): void {
 }
 
 function building(hotel: boolean): BuildingParts {
-  const color = hotel ? "#e5322d" : "#16b455";
-  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-  const w = hotel ? 0.46 : 0.15;
-  const h = hotel ? 0.2 : 0.12;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.16), material);
-  body.position.y = h / 2;
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.1, 4), material);
-  roof.rotation.y = Math.PI / 4;
-  roof.scale.x = hotel ? 2.6 : 1;
-  roof.position.y = h + 0.05;
+  const g = hotel ? hotelGeometry() : houseGeometry();
+  const body = new THREE.Mesh(g.body, BUILDING_MATERIAL);
+  const roof = new THREE.Mesh(g.roof, BUILDING_MATERIAL);
+  roof.position.y = g.height;
   for (const m of [body, roof]) m.castShadow = true;
-  const windows = new THREE.Mesh(
-    new THREE.BoxGeometry(hotel ? 0.36 : 0.06, hotel ? 0.05 : 0.04, 0.172),
-    SHARED_WINDOW_MATERIAL,
-  );
-  windows.position.y = h * 0.55;
+  const windows = new THREE.Mesh(g.glow, SHARED_WINDOW_MATERIAL);
   const core = new THREE.Group();
   core.add(body, roof, windows);
   const group = new THREE.Group();
   group.add(core);
-  return { group, core, body, roof, windows, height: h };
+  return { group, core, body, roof, windows, height: g.height };
 }

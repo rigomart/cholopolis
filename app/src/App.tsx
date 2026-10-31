@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
+import type { Deck } from "../../shared/board.ts";
 import { DICE_HOLD_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
 import { canDragDice } from "../../shared/game.ts";
 import { registerBoardSnapshot } from "./postcard.ts";
@@ -126,6 +127,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const [rolling, setRolling] = useState(false);
   const rollId = state?.rollId;
   const diceLanded = useCallback((id: number) => scene?.diceLanded(id) ?? true, [scene]);
+  const liftCard = useCallback((deck: Deck) => scene?.liftCard(deck), [scene]);
   const turnKey = `${state?.turn?.playerId}:${state?.turn?.stage}`;
 
   useEffect(() => {
@@ -246,6 +248,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           onSheet={setSheet}
           board={board}
           boardPick={boardPick}
+          onCardShown={liftCard}
         />
       )}
       {state && state.phase !== "lobby" && scene && (

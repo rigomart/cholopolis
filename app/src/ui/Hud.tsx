@@ -2,7 +2,7 @@ import "./hud.css";
 import type { RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { JAIL_FINE, square } from "../../../shared/board.ts";
+import { type Deck, JAIL_FINE, square } from "../../../shared/board.ts";
 import {
   type Action,
   debtors,
@@ -49,6 +49,8 @@ interface Props {
   onSheet: (sheet: Sheet) => void;
   board: BoardLink;
   boardPick: BoardPick;
+  /** A drawn card's toast just went up: the board lifts the top card of its deck. */
+  onCardShown: (deck: Deck) => void;
 }
 
 /** The side sheet that is open; `opened` tells a fresh deal table from the one already open. */
@@ -70,6 +72,7 @@ export function Hud({
   onSheet: setSheet,
   board,
   boardPick,
+  onCardShown,
 }: Props) {
   const { state, you, spectators, send, serverNow } = table;
   const [muted, setMutedState] = useState(isMuted);
@@ -164,6 +167,7 @@ export function Hud({
         diceLanded={diceLanded}
         yours={state.turn?.playerId === you && state.turn.stage === "roll"}
         held={shaking !== null && shaking === you}
+        onShown={onCardShown}
       />
 
       {sheet?.kind === "props" && me && (
@@ -453,6 +457,7 @@ function CardToast({
   diceLanded,
   yours,
   held,
+  onShown,
 }: {
   card: DrawnCard | null;
   state: PublicState;
@@ -461,6 +466,7 @@ function CardToast({
   yours: boolean;
   /** You picked the dice up, so you're done reading. */
   held: boolean;
+  onShown: (deck: Deck) => void;
 }) {
   const [seenId, setSeenId] = useState(card?.id ?? 0);
   const [queue, setQueue] = useState<{ card: DrawnCard; rollId: number }[]>([]);
@@ -481,6 +487,9 @@ function CardToast({
     }, 100);
     return () => clearInterval(id);
   }, [next, shown, diceLanded]);
+  useEffect(() => {
+    if (shown) onShown(shown.card.deck);
+  }, [shown, onShown]);
   useEffect(() => {
     if (!shown) return;
     const id = setTimeout(() => setShown(null), CARD_MS);
