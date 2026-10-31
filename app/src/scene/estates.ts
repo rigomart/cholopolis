@@ -1,7 +1,19 @@
 import * as THREE from "three";
 
 import { HOTEL, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
+import { playBuildSound } from "../audio.ts";
 import { INK } from "./boardTexture.ts";
+import {
+  type BuildingParts,
+  type Construction,
+  cuesBetween,
+  HOTEL_CUES,
+  HOTEL_MS,
+  hotelConstruction,
+  HOUSE_CUES,
+  HOUSE_MS,
+  houseConstruction,
+} from "./construction.ts";
 import { BOUNCE_FIRST_HIT, bounce, disposeTree, easeIn, easeOut, easeOutBack, type Effects } from "./effects.ts";
 import { buildingSpot, HALF, isCorner, sideOf, toBoard } from "./layout.ts";
 
@@ -10,6 +22,8 @@ const BURY = 0.32;
 const GREY = new THREE.Color("#8d8a99");
 const VEIL_OPACITY = 0.55;
 const HOTEL_SPOT = 4;
+/** Gap between buildings that start going up in the same update. */
+const BUILD_STAGGER = 140;
 
 interface BuildingsView {
   houses: number;
@@ -33,6 +47,8 @@ function markColor(color: number, mortgaged: boolean): THREE.Color {
 /** Houses, hotels and owner markers, kept in step with the game state by `sync`. */
 export class Estates {
   private readonly buildings = new Map<number, BuildingsView>();
+  /** Buildings still going up, so one that is sold meanwhile can be finished off first. */
+  private readonly constructions = new Map<THREE.Group, Construction>();
   private readonly deeds = new Map<number, DeedView>();
   private readonly scene: THREE.Scene;
   private readonly effects: Effects;
@@ -47,17 +63,20 @@ export class Estates {
   /** With `animate` false, everything takes its final place at once. */
   sync(state: PublicState, animate: boolean): void {
     const now = performance.now();
+    let started = 0;
     state.props.forEach((prop, index) => {
       if (!prop) return;
-      this.syncBuildings(index, prop.houses, animate, now);
+      // Several squares built in one turn (evenly across a color group) start a beat apart.
+      started += this.syncBuildings(index, prop.houses, animate, now + started * BUILD_STAGGER);
       const owner = state.players.find((p) => p.id === prop.owner);
       this.syncDeed(index, owner?.color ?? null, prop.mortgaged, animate, now);
     });
   }
 
-  private syncBuildings(index: number, houses: number, animate: boolean, now: number): void {
+  /** Returns how many buildings started going up. */
+  private syncBuildings(index: number, houses: number, animate: boolean, now: number): number {
     const view = this.buildings.get(index) ?? { houses: 0, items: [] };
-    if (view.houses === houses) return;
+    if (view.houses === houses) return 0;
     this.buildings.set(index, view);
     const swap = (view.houses === HOTEL) !== (houses === HOTEL);
     const keep = swap ? 0 : Math.min(view.items.length, houses);
@@ -65,16 +84,35 @@ export class Estates {
     gone.forEach((item, n) => this.lower(item, animate, now + n * 70));
     const spots = houses === HOTEL ? [HOTEL_SPOT] : Array.from({ length: houses - keep }, (_, n) => keep + n);
     const wait = swap && gone.length > 0 ? 220 + gone.length * 70 : 0;
-    spots.forEach((spot, n) => view.items.push(this.raise(index, spot, animate, now + wait + n * 90)));
+    // Selling a hotel brings the houses back with a quick pop, not a construction site.
+    const sold = view.houses === HOTEL && houses !== HOTEL;
+    spots.forEach((spot, n) =>
+      view.items.push(
+        sold
+          ? this.pop(index, spot, animate, now + wait + n * 90)
+          : this.raise(index, spot, animate, now + wait + n * 90),
+      ),
+    );
     view.houses = houses;
+    return sold ? 0 : spots.length;
   }
 
-  private raise(index: number, spot: number, animate: boolean, start: number): THREE.Group {
-    const item = building(spot === HOTEL_SPOT);
+  private place(
+    index: number,
+    spot: number,
+  ): { parts: BuildingParts; item: THREE.Group; at: { x: number; z: number } } {
+    const parts = building(spot === HOTEL_SPOT);
+    const item = parts.group;
     const at = buildingSpot(index, spot);
     item.position.set(at.x, this.surfaceY, at.z);
     item.rotation.y = (-sideOf(index) * Math.PI) / 2;
     this.scene.add(item);
+    return { parts, item, at };
+  }
+
+  /** A building that comes back quickly: it rises out of the board, squashed, with a puff of dust. */
+  private pop(index: number, spot: number, animate: boolean, start: number): THREE.Group {
+    const { item, at } = this.place(index, spot);
     if (!animate) return item;
     item.position.y = this.surfaceY - BURY;
     this.effects.add({
@@ -87,7 +125,35 @@ export class Estates {
         item.scale.set(across, 0.4 + 0.6 * easeOutBack(t), across);
       },
     });
-    this.effects.dust(new THREE.Vector3(at.x, this.surfaceY + 0.01, at.z), start, spot === HOTEL_SPOT ? 1.4 : 1);
+    this.effects.dust(new THREE.Vector3(at.x, this.surfaceY + 0.01, at.z), start, 1);
+    return item;
+  }
+
+  /** A building going up: a house inside scaffolding, a hotel floor by floor under a crane. */
+  private raise(index: number, spot: number, animate: boolean, start: number): THREE.Group {
+    const hotel = spot === HOTEL_SPOT;
+    const { parts, item, at } = this.place(index, spot);
+    if (!animate) return item;
+    const construction = hotel ? hotelConstruction(parts) : houseConstruction(parts);
+    const ms = hotel ? HOTEL_MS : HOUSE_MS;
+    const cues = hotel ? HOTEL_CUES : HOUSE_CUES;
+    let last = 0;
+    this.constructions.set(item, construction);
+    this.effects.add({
+      target: item,
+      start,
+      ms,
+      step: (t) => {
+        construction.step(t);
+        for (const cue of cuesBetween(cues, last, t)) playBuildSound(cue);
+        last = t;
+      },
+      done: () => {
+        this.constructions.delete(item);
+        construction.done();
+      },
+    });
+    this.effects.dust(new THREE.Vector3(at.x, this.surfaceY + 0.01, at.z), start + ms * 0.9, hotel ? 1.4 : 0.9);
     return item;
   }
 
@@ -96,6 +162,9 @@ export class Estates {
       this.scene.remove(item);
       disposeTree(item);
     };
+    // The construction tween is replaced below without finishing, so take its scaffolding or crane down now.
+    this.constructions.get(item)?.done();
+    this.constructions.delete(item);
     if (!animate) return remove();
     const fromY = item.position.y;
     const fromScale = item.scale.clone();
@@ -242,7 +311,7 @@ export function setWindowGlow(night: number): void {
   SHARED_WINDOW_MATERIAL.visible = night > 0.001;
 }
 
-function building(hotel: boolean): THREE.Group {
+function building(hotel: boolean): BuildingParts {
   const color = hotel ? "#e5322d" : "#16b455";
   const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const w = hotel ? 0.46 : 0.15;
@@ -259,7 +328,9 @@ function building(hotel: boolean): THREE.Group {
     SHARED_WINDOW_MATERIAL,
   );
   windows.position.y = h * 0.55;
+  const core = new THREE.Group();
+  core.add(body, roof, windows);
   const group = new THREE.Group();
-  group.add(body, roof, windows);
-  return group;
+  group.add(core);
+  return { group, core, body, roof, windows, height: h };
 }

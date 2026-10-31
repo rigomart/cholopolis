@@ -6,7 +6,7 @@ const MUTE_KEY = "cholopolis:mute";
 
 let ctx: AudioContext | null = null;
 let noise: AudioBuffer | null = null;
-let muted = localStorage.getItem(MUTE_KEY) === "1";
+let muted = globalThis.localStorage?.getItem(MUTE_KEY) === "1";
 
 export function unlockAudio(): void {
   ctx ??= new AudioContext();
@@ -117,4 +117,39 @@ export function playMeow(): void {
   osc.connect(vowel).connect(gain).connect(ctx.destination);
   osc.start(t);
   osc.stop(t + 0.5);
+}
+
+/** The soft sounds of a building going up: hammer taps, a crane whir, a floor set down. */
+export function playBuildSound(cue: "tap" | "whir" | "thunk"): void {
+  if (cue === "tap") {
+    const pitch = 0.92 + Math.random() * 0.16;
+    knock(0, 0.22, 1500 * pitch);
+    tone(0, 330 * pitch, 0.05, 0.05, "triangle");
+  } else if (cue === "thunk") {
+    knock(0, 0.3, 620);
+    tone(0, 150, 0.08, 0.09, "sine");
+  } else {
+    whir();
+  }
+}
+
+/** A short motor hum that rises and falls, like a crane taking up slack. */
+function whir(): void {
+  if (!ctx || muted || ctx.state !== "running") return;
+  const t = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(90, t);
+  osc.frequency.linearRampToValueAtTime(150, t + 0.25);
+  osc.frequency.linearRampToValueAtTime(95, t + 0.5);
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 600;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.045, t + 0.08);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  osc.connect(filter).connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.52);
 }
