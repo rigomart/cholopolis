@@ -23,6 +23,7 @@ import {
   syncPresence,
 } from "./game.ts";
 import { parseClientMessage } from "./protocol.ts";
+import { statsOf } from "./stats.ts";
 
 /** An rng that replays dice faces (1–6), then keeps returning 0. */
 function dice(...faces: number[]) {
@@ -823,4 +824,56 @@ test("only a connected current player at this roll can drag, including in the Pe
   p(g, "a").connected = true;
   if (g.turn) g.turn.stage = "done";
   expect(canDragDice(g, "a", 0)).toBe(false);
+});
+
+const stats = (g: GameState, id: string) => g.stats[id];
+
+describe("postcard stats", () => {
+  test("rent is counted for the payer and the owner, by square", () => {
+    const g = inDebt();
+    expect(stats(g, "a")).toMatchObject({ rentPaid: 2000, rentPaidAt: { 39: 2000 }, biggestPayment: 2000 });
+    expect(stats(g, "b")).toMatchObject({ rentReceived: 2000, rentReceivedAt: { 39: 2000 } });
+    run(g, "a", { type: "bankrupt" });
+    expect(stats(g, "b")?.knockouts).toBe(1);
+  });
+
+  test("a mortgaged square charges no rent and counts none", () => {
+    const g = playing();
+    g.props[3] = { owner: "b", houses: 0, mortgaged: true };
+    run(g, "a", { type: "roll" }, dice(1, 2));
+    expect(stats(g, "a")?.rentPaid ?? 0).toBe(0);
+  });
+
+  test("laps, doubles, purchases, buildings, the Penal and the bank", () => {
+    const g = playing();
+    p(g, "a").position = 36;
+    run(g, "a", { type: "roll" }, dice(2, 2));
+    run(g, "a", { type: "roll" }, dice(1, 2));
+    run(g, "a", { type: "buy" });
+    own(g, "a", 1);
+    run(g, "a", { type: "build", square: 1 });
+    expect(stats(g, "a")).toMatchObject({ laps: 1, doubles: 1, purchases: 1, built: 1 });
+
+    run(g, "a", { type: "endTurn" });
+    p(g, "b").position = 27;
+    run(g, "b", { type: "roll" }, dice(1, 2));
+    run(g, "b", { type: "endTurn" });
+    expect(stats(g, "b")?.jailed).toBe(1);
+
+    run(g, "a", { type: "roll" }, dice(4, 5));
+    expect(p(g, "a").position).toBe(12);
+    if (g.turn) g.turn.stage = "done";
+    run(g, "a", { type: "endTurn" });
+    run(g, "b", { type: "payJailFine" });
+    expect(stats(g, "b")).toMatchObject({ paidToBank: 50, biggestPayment: 50 });
+  });
+
+  test("rematch clears them and older saves load with none", () => {
+    const g = over();
+    statsOf(g.stats, "a").laps = 4;
+    run(g, "a", { type: "rematch" });
+    expect(g.stats).toEqual({});
+    const { stats: _stats, ...old } = playing();
+    expect(restoreGame(old as GameState).stats).toEqual({});
+  });
 });

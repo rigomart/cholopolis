@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import { DICE_HOLD_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
 import { canDragDice } from "../../shared/game.ts";
+import { registerBoardSnapshot } from "./postcard.ts";
 import { BoardScene } from "./scene/BoardScene.ts";
 import { createRoom, findOpenRoom, goToRoom, roomFromPath, saveName } from "./session.ts";
 import { Deed } from "./ui/Deed.tsx";
@@ -38,7 +39,11 @@ export function App() {
       return;
     }
     setScene(s);
-    return () => s.dispose();
+    registerBoardSnapshot((width, height) => s.snapshot(width, height));
+    return () => {
+      registerBoardSnapshot(null);
+      s.dispose();
+    };
   }, []);
 
   useEffect(() => {
