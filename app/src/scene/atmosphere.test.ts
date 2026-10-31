@@ -6,10 +6,17 @@ import { DAY_MS, duskAt } from "./atmosphere.ts";
 const MINUTE = 60_000;
 const START = 1_000_000;
 
-const game = (phase: PublicState["phase"], timeLimit: number | null) =>
-  ({ phase, timeLimit, endsAt: timeLimit === null ? null : START + timeLimit * MINUTE }) as unknown as PublicState;
+const game = (phase: PublicState["phase"], timeLimit: number | null, startedAt: number | null = null) =>
+  ({
+    phase,
+    timeLimit,
+    startedAt,
+    endsAt: timeLimit === null ? null : START + timeLimit * MINUTE,
+  }) as unknown as PublicState;
 
 const timed = (minutes: number) => duskAt(game("playing", 30), START + minutes * MINUTE, 0);
+const seenHalfHourIn = (minutes: number) =>
+  duskAt(game("playing", null, START), START + minutes * MINUTE, START + 30 * MINUTE);
 const untimed = (minutes: number) => duskAt(game("playing", null), START + minutes * MINUTE, START);
 
 describe("duskAt", () => {
@@ -26,7 +33,13 @@ describe("duskAt", () => {
     expect(timed(-5)).toBe(0);
   });
 
-  test("an untimed game loops through a day from when play was first seen", () => {
+  test("an untimed game loops through a day from its start, whenever this screen first saw it", () => {
+    expect(seenHalfHourIn(8)).toBeCloseTo(0.5);
+    expect(seenHalfHourIn(20)).toBe(1);
+    expect(seenHalfHourIn(37)).toBe(0);
+  });
+
+  test("an untimed game from before startedAt loops from when play was first seen", () => {
     expect(untimed(0)).toBe(0);
     expect(untimed(8)).toBeCloseTo(0.5);
     expect(untimed(20)).toBe(1);

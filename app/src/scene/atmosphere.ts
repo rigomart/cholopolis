@@ -17,16 +17,17 @@ const LOOP_DAWN_ENDS = 0.85;
 /**
  * How far into the evening the table is: 0 afternoon (the lobby's look), 0.5 sunset, 1 night.
  * A timed game runs from afternoon to night over its length; an untimed one loops through a day
- * from `playStart`, the moment this screen first saw it in play.
+ * from `startedAt`, or from `firstSeen` (when this screen first saw it in play) for games that predate `startedAt`.
  */
-export function duskAt(state: PublicState | null, now: number, playStart: number): number {
+export function duskAt(state: PublicState | null, now: number, firstSeen: number): number {
   if (!state || state.phase === "lobby") return 0;
   if (state.endsAt !== null && state.timeLimit !== null) {
     const length = state.timeLimit * MINUTE;
     const progress = (now - (state.endsAt - length)) / length;
     return THREE.MathUtils.clamp(progress / TIMED_FULL_NIGHT_AT_SHARE, 0, 1);
   }
-  const q = ((((now - playStart) % DAY_MS) + DAY_MS) % DAY_MS) / DAY_MS;
+  const start = state.startedAt ?? firstSeen;
+  const q = ((((now - start) % DAY_MS) + DAY_MS) % DAY_MS) / DAY_MS;
   if (q < LOOP_DUSK_ENDS) return q / LOOP_DUSK_ENDS;
   if (q < LOOP_DAWN_STARTS) return 1;
   if (q < LOOP_DAWN_ENDS) return 1 - (q - LOOP_DAWN_STARTS) / (LOOP_DAWN_ENDS - LOOP_DAWN_STARTS);
@@ -277,7 +278,7 @@ export class Atmosphere {
   private readonly forced: { dusk: number | null; rain: boolean | null };
 
   private state: PublicState | null = null;
-  private playStart = 0;
+  private firstSeen = 0;
   private now: () => number = Date.now;
   private dusk = 0;
   private duskTarget = 0;
@@ -320,10 +321,10 @@ export class Atmosphere {
     const previous = this.state;
     this.state = state;
     if (!inPlay(state) || inPlay(previous)) return;
-    this.playStart = this.now();
+    this.firstSeen = this.now();
     const joinedMidway = previous?.phase !== "lobby";
     if (joinedMidway) this.snapDusk = true;
-    this.duskTarget = duskAt(state, this.playStart, this.playStart);
+    this.duskTarget = duskAt(state, this.firstSeen, this.firstSeen);
     this.nextWeather = performance.now() + within(60, 150) * 1000;
   }
 
@@ -345,7 +346,7 @@ export class Atmosphere {
     }
     const state = this.state;
     const hourFrozen = state?.phase === "ended";
-    if (!hourFrozen) this.duskTarget = this.forced.dusk ?? duskAt(state, this.now(), this.playStart);
+    if (!hourFrozen) this.duskTarget = this.forced.dusk ?? duskAt(state, this.now(), this.firstSeen);
     if (this.snapDusk) {
       this.dusk = this.duskTarget;
       this.snapDusk = false;
