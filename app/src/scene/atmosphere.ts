@@ -5,6 +5,7 @@ import { DICE_WALL } from "../../../shared/dice.ts";
 import type { PublicState } from "../../../shared/game.ts";
 import { INK } from "./boardTexture.ts";
 import { INNER, toBoard } from "./layout.ts";
+import { COMBI } from "./palette.ts";
 
 const MINUTE = 60_000;
 /** Untimed games go round a full day in this long. */
@@ -34,12 +35,12 @@ export function duskAt(state: PublicState | null, now: number, firstSeen: number
   return 0;
 }
 
-type Keys<T> = readonly [afternoon: T, sunset: T, night: T];
+export type Keys<T> = readonly [afternoon: T, sunset: T, night: T];
 
 const SKY = {
   background: [INK, "#33163f", "#0c0a24"],
   hemiSky: ["#fff3e0", "#ffc596", "#a3aee6"],
-  hemiGround: ["#3a2a80", "#4a2668", "#2a2068"],
+  hemiGround: ["#4a4d5a", "#5a4650", "#262a40"],
   sunColor: ["#ffffff", "#ff9d5c", "#b4c2ff"],
 } as const satisfies Record<string, Keys<string>>;
 const HEMI_INTENSITY: Keys<number> = [1.25, 1.1, 0.75];
@@ -69,13 +70,13 @@ function lerpKeys(keys: Keys<number>, s: number): number {
   return THREE.MathUtils.lerp(keys[scratchKey.index] ?? 0, keys[scratchKey.index + 1] ?? 0, scratchKey.fraction);
 }
 
-const colorKeys = (keys: Keys<string>): Keys<THREE.Color> => [
+export const colorKeys = (keys: Keys<string>): Keys<THREE.Color> => [
   new THREE.Color(keys[0]),
   new THREE.Color(keys[1]),
   new THREE.Color(keys[2]),
 ];
 
-function sampleColor(out: THREE.Color, keys: Keys<THREE.Color>, s: number): THREE.Color {
+export function sampleColor(out: THREE.Color, keys: Keys<THREE.Color>, s: number): THREE.Color {
   locate(s);
   return out.lerpColors(keys[scratchKey.index] ?? out, keys[scratchKey.index + 1] ?? out, scratchKey.fraction);
 }
@@ -97,7 +98,8 @@ function glowTexture(): THREE.CanvasTexture {
 
 // ---------------------------------------------------------------- streetlights
 
-const POLE_HEIGHT = 0.5;
+const POLE_HEIGHT = 0.62;
+const ARM = 0.2;
 const LAMP_X_PER_RAIL_SIDE = [-1.5, 1.5];
 
 interface Streetlights {
@@ -110,21 +112,35 @@ interface Streetlights {
 function buildStreetlights(surfaceY: number, texture: THREE.Texture): Streetlights {
   const railTop = surfaceY + 0.24;
   const railZ = (DICE_WALL + INNER) / 2;
-  const spots = [0, 1, 2, 3].flatMap((side) => LAMP_X_PER_RAIL_SIDE.map((x) => toBoard({ x, z: railZ }, side)));
+  const lamps = [0, 1, 2, 3].flatMap((side) =>
+    LAMP_X_PER_RAIL_SIDE.map((x) => {
+      const foot = toBoard({ x, z: railZ }, side);
+      const inward = toBoard({ x: 0, z: -1 }, side);
+      return { side, foot, head: { x: foot.x + inward.x * ARM, z: foot.z + inward.z * ARM } };
+    }),
+  );
+  const spots = lamps.map((l) => l.head);
+  const headY = railTop + POLE_HEIGHT + 0.01;
 
   const group = new THREE.Group();
-  const poles = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.016, 0.022, POLE_HEIGHT, 6),
-    new THREE.MeshStandardMaterial({ color: "#2a1f66", roughness: 0.6 }),
-    spots.length,
-  );
+  const iron = new THREE.MeshStandardMaterial({ color: COMBI.ink3, roughness: 0.5 });
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.014, 0.02, POLE_HEIGHT, 6), iron, lamps.length);
+  const arms = new THREE.InstancedMesh(new THREE.BoxGeometry(0.018, 0.018, ARM + 0.02), iron, lamps.length);
   const heads = new THREE.MeshBasicMaterial({ color: LAMP_OFF });
-  const lamps = new THREE.InstancedMesh(new THREE.SphereGeometry(0.045, 10, 8), heads, spots.length);
+  const bulbs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 0.02, 0.055), heads, lamps.length);
   const m = new THREE.Matrix4();
-  spots.forEach((p, i) => {
-    poles.setMatrixAt(i, m.makeTranslation(p.x, railTop + POLE_HEIGHT / 2, p.z));
-    lamps.setMatrixAt(i, m.makeTranslation(p.x, railTop + POLE_HEIGHT + 0.03, p.z));
+  const up = new THREE.Vector3(0, 1, 0);
+  const one = new THREE.Vector3(1, 1, 1);
+  lamps.forEach((l, i) => {
+    const q = new THREE.Quaternion().setFromAxisAngle(up, (l.side * Math.PI) / 2);
+    poles.setMatrixAt(i, m.makeTranslation(l.foot.x, railTop + POLE_HEIGHT / 2, l.foot.z));
+    arms.setMatrixAt(
+      i,
+      m.compose(new THREE.Vector3((l.foot.x + l.head.x) / 2, headY, (l.foot.z + l.head.z) / 2), q, one),
+    );
+    bulbs.setMatrixAt(i, m.compose(new THREE.Vector3(l.head.x, headY - 0.012, l.head.z), q, one));
   });
+  for (const mesh of [poles, arms]) mesh.castShadow = true;
 
   const glow = new THREE.PointsMaterial({
     color: LAMP,
@@ -139,7 +155,7 @@ function buildStreetlights(surfaceY: number, texture: THREE.Texture): Streetligh
     new THREE.BufferGeometry().setAttribute(
       "position",
       new THREE.Float32BufferAttribute(
-        spots.flatMap((p) => [p.x, railTop + POLE_HEIGHT + 0.03, p.z]),
+        spots.flatMap((p) => [p.x, headY - 0.02, p.z]),
         3,
       ),
     ),
@@ -159,7 +175,7 @@ function buildStreetlights(surfaceY: number, texture: THREE.Texture): Streetligh
   const poolGeometry = mergeGeometries(
     spots.map((p) => new THREE.PlaneGeometry(2.2, 2.2).rotateX(-Math.PI / 2).translate(p.x, surfaceY + 0.004, p.z)),
   );
-  group.add(poles, lamps, glowPoints, new THREE.Mesh(poolGeometry, pools));
+  group.add(poles, arms, bulbs, glowPoints, new THREE.Mesh(poolGeometry, pools));
   return { group, heads, glow, pools };
 }
 
@@ -245,7 +261,14 @@ const within = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 
 // ---------------------------------------------------------------- atmosphere
 
+/** A sky that paints its own horizon and gradient from the time of day; the fog takes its horizon colour. */
+export interface Sky {
+  horizon: (dusk: number, rain: number, out: THREE.Color) => THREE.Color;
+  update: (dusk: number, night: number, rain: number) => void;
+}
+
 export interface Lighting {
+  sky?: Sky;
   hemisphere: THREE.HemisphereLight;
   sun: THREE.DirectionalLight;
   boardFace: THREE.MeshStandardMaterial;
@@ -284,6 +307,7 @@ export class Atmosphere {
   private duskTarget = 0;
   private snapDusk = true;
   private shown = -1;
+  private night = 0;
   private rain = 0;
   private shownRain = -1;
   private raining = false;
@@ -377,6 +401,7 @@ export class Atmosphere {
     boardFace.emissiveIntensity = lerpKeys(FACE_GLOW, s);
 
     const night = THREE.MathUtils.smoothstep(s, 0.45, 0.85);
+    this.night = night;
     this.lamps.heads.color.lerpColors(LAMP_OFF, LAMP, night);
     this.lamps.glow.opacity = 0.85 * night;
     this.lamps.pools.opacity = 0.22 * night;
@@ -388,7 +413,13 @@ export class Atmosphere {
   private applyBackgroundFogAndSun(): void {
     const s = this.shown;
     const mist = this.rain * MIST_MIX;
-    sampleColor(this.background, this.keys.background, s).lerp(MIST, mist);
+    const sky = this.lighting.sky;
+    if (sky) {
+      sky.update(s, this.night, this.rain);
+      sky.horizon(s, this.rain, this.background);
+    } else {
+      sampleColor(this.background, this.keys.background, s).lerp(MIST, mist);
+    }
     this.fog.color.copy(this.background);
     this.fog.near = this.viewDistance + this.fogPastTarget.near - 10 * this.rain;
     this.fog.far = this.viewDistance + this.fogPastTarget.far - 12 * this.rain;

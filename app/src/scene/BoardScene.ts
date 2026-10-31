@@ -1,20 +1,24 @@
 import * as THREE from "three";
 
-import { SALIDA_BONUS } from "../../../shared/board.ts";
-import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
+import { type Deck, SALIDA_BONUS } from "../../../shared/board.ts";
+import type { DiceHold } from "../../../shared/dice.ts";
 import { money, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { playMeow } from "../audio.ts";
 import { Atmosphere } from "./atmosphere.ts";
-import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
+import { Backdrop } from "./backdrop.ts";
+import { drawBoard, FONT, INK } from "./boardTexture.ts";
 import { CameraRig } from "./CameraRig.ts";
 import { FOV, HOME_DISTANCE, spotView, type ViewName } from "./cameraViews.ts";
+import { CardStacks } from "./cards.ts";
 import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
 import { Estates, setWindowGlow } from "./estates.ts";
 import { SquareHighlight } from "./highlight.ts";
-import { BOARD_SIZE, INNER, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
+import { BOARD_SIZE, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
+import { COMBI } from "./palette.ts";
 import { buildPiece } from "./pieces.ts";
+import { buildRim } from "./rim.ts";
 import { snapshotScene } from "./snapshot.ts";
 import { registerThumbnails } from "./thumbnails.ts";
 
@@ -46,31 +50,6 @@ interface PieceView {
 
 const vec = (p: Local, y = TOP) => new THREE.Vector3(p.x, y, p.z);
 
-/** The low rail the dice bounce off, between their walls and the squares, with a chicha post at each corner. */
-function buildRim(): THREE.Group {
-  const rim = new THREE.Group();
-  const width = INNER - DICE_WALL;
-  const height = 0.24;
-  const rail = new THREE.MeshStandardMaterial({ color: "#3b2a8a", roughness: 0.55 });
-  for (let side = 0; side < 4; side++) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(2 * DICE_WALL, height, width), rail);
-    const post = new THREE.Mesh(
-      new THREE.BoxGeometry(width * 1.4, height + 0.06, width * 1.4),
-      new THREE.MeshStandardMaterial({ color: CHICHA[side], roughness: 0.45 }),
-    );
-    const along = toBoard({ x: 0, z: DICE_WALL + width / 2 }, side);
-    const corner = toBoard({ x: DICE_WALL + width / 2, z: DICE_WALL + width / 2 }, side);
-    bar.position.set(along.x, TOP + height / 2, along.z);
-    bar.rotation.y = (side * Math.PI) / 2;
-    post.position.set(corner.x, TOP + (height + 0.06) / 2, corner.z);
-    for (const m of [bar, post]) {
-      m.castShadow = true;
-      m.receiveShadow = true;
-    }
-    rim.add(bar, post);
-  }
-  return rim;
-}
 const pieceKey = (piece: number, color: number) => `${piece}:${color}`;
 
 /** Heading (rotation about y) that points a model's +x along a board direction. */
@@ -101,7 +80,7 @@ function crowdScale(count: number): number {
 export class BoardScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 200);
+  private readonly camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 400);
   private readonly rig: CameraRig;
   private readonly board: THREE.Mesh;
   private readonly boardCanvas = document.createElement("canvas");
@@ -114,8 +93,10 @@ export class BoardScene {
   private readonly estates = new Estates(this.scene, this.effects, TOP);
   private readonly atmosphere: Atmosphere;
   private readonly highlight: SquareHighlight;
+  private readonly backdrop = new Backdrop();
   private readonly observer: ResizeObserver;
   private readonly reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  private readonly cards = new CardStacks(this.reducedMotion);
   private readonly container: HTMLElement;
   private thumbTarget: THREE.WebGLRenderTarget | null = null;
 
@@ -144,7 +125,7 @@ export class BoardScene {
 
     this.rig = new CameraRig(this.camera, this.renderer.domElement, this.reducedMotion);
 
-    const hemisphere = new THREE.HemisphereLight("#fff3e0", "#3a2a80", 1.25);
+    const hemisphere = new THREE.HemisphereLight("#fff3e0", "#4a4d5a", 1.25);
     this.scene.add(hemisphere);
     const sun = new THREE.DirectionalLight("#ffffff", 1.7);
     sun.position.set(7, 16, 9);
@@ -154,16 +135,12 @@ export class BoardScene {
     sun.shadow.bias = -0.0005;
     this.scene.add(sun);
 
-    const table = new THREE.Mesh(
-      new THREE.CircleGeometry(60, 64),
-      new THREE.MeshStandardMaterial({ color: "#26185c", roughness: 0.95 }),
-    );
-    table.rotation.x = -Math.PI / 2;
-    table.receiveShadow = true;
-    this.scene.add(table);
+    this.scene.add(this.backdrop.group);
 
+    // A phone's canvas is capped by its browser (16 M pixels on iOS), so only a desktop pointer gets the big one.
     const small = Math.min(innerWidth, innerHeight) < 700;
-    const size = Math.min(this.renderer.capabilities.maxTextureSize, small ? 2048 : 4096);
+    const fine = matchMedia("(pointer: fine)").matches;
+    const size = Math.min(this.renderer.capabilities.maxTextureSize, small ? 3072 : fine ? 6144 : 4096);
     this.boardCanvas.width = this.boardCanvas.height = size;
     drawBoard(this.boardCanvas);
     this.boardTexture = new THREE.CanvasTexture(this.boardCanvas);
@@ -173,9 +150,10 @@ export class BoardScene {
     void document.fonts.load(`condensed 800 40px ${FONT}`).then(() => {
       drawBoard(this.boardCanvas);
       this.boardTexture.needsUpdate = true;
+      this.cards.refresh();
     });
 
-    const edge = new THREE.MeshStandardMaterial({ color: "#3b2a8a", roughness: 0.6 });
+    const edge = new THREE.MeshStandardMaterial({ color: COMBI.ink, roughness: 0.7 });
     const face = new THREE.MeshStandardMaterial({ map: this.boardTexture, roughness: 0.8 });
     this.board = new THREE.Mesh(new THREE.BoxGeometry(BOARD_SIZE, THICKNESS, BOARD_SIZE), [
       edge,
@@ -188,10 +166,10 @@ export class BoardScene {
     this.board.position.y = THICKNESS / 2;
     this.board.receiveShadow = true;
     this.scene.add(this.board);
-    this.scene.add(buildRim());
+    this.scene.add(buildRim(), this.cards.group);
     this.atmosphere = new Atmosphere(
       this.scene,
-      { hemisphere, sun, boardFace: face, onNight: setWindowGlow, fogTunedAt: HOME_DISTANCE },
+      { hemisphere, sun, boardFace: face, onNight: setWindowGlow, fogTunedAt: HOME_DISTANCE, sky: this.backdrop },
       TOP,
       this.reducedMotion,
     );
@@ -312,6 +290,11 @@ export class BoardScene {
     this.highlight.set(source, indices);
   }
 
+  /** Lifts the top card of `deck` off its stack, as the drawn card's toast shows. */
+  liftCard(deck: Deck): void {
+    this.cards.lift(deck, performance.now());
+  }
+
   dispose(): void {
     this.dice.cancel();
     this.highlight.dispose();
@@ -324,6 +307,7 @@ export class BoardScene {
     this.effects.dispose();
     this.cats.dispose();
     this.atmosphere.dispose();
+    this.backdrop.dispose();
     this.thumbTarget?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -602,13 +586,8 @@ export class BoardScene {
   snapshot(width: number, height: number): HTMLCanvasElement {
     // A building still going up would show its scaffolding.
     this.effects.finish();
-    return snapshotScene(
-      this.renderer,
-      this.scene,
-      this.camera.position.distanceTo(this.rig.controls.target),
-      width,
-      height,
-    );
+    const viewDistance = this.camera.position.distanceTo(this.rig.controls.target);
+    return this.backdrop.withoutHud(() => snapshotScene(this.renderer, this.scene, viewDistance, width, height));
   }
 
   /** A transparent PNG of one token, for the player list and the piece picker. */
@@ -675,6 +654,7 @@ export class BoardScene {
     this.followWalks(now);
     this.rig.update(now, dt, this.dice.held);
     this.highlight.update(now);
+    this.cards.update(now);
     this.atmosphere.update(now, dt, this.camera.position.distanceTo(this.rig.controls.target));
     this.renderer.render(this.scene, this.camera);
   }
@@ -699,6 +679,7 @@ export class BoardScene {
     this.camera.updateProjectionMatrix();
     this.rig.resize();
     this.atmosphere.resize(h * this.renderer.getPixelRatio(), this.camera);
+    this.backdrop.setViewport(w, h, this.renderer.getPixelRatio());
   }
 
   private pointerRay(e: PointerEvent): THREE.Raycaster {

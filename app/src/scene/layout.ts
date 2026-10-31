@@ -7,7 +7,7 @@
 export const BOARD_SIZE = 13;
 export const HALF = BOARD_SIZE / 2;
 export const INNER = HALF - 2;
-export const BAND = 0.42;
+export const BAND = 0.46;
 
 export interface Local {
   x: number;

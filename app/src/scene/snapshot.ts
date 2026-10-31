@@ -14,7 +14,7 @@ export function snapshotScene(
   width: number,
   height: number,
 ): HTMLCanvasElement {
-  const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 400);
   camera.position.copy(CAMERA_POSITION);
   camera.lookAt(CAMERA_TARGET);
   const target = new THREE.WebGLRenderTarget(width, height, { colorSpace: THREE.SRGBColorSpace, samples: 4 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { FLOOR_H } from "./buildings.ts";
 import {
   cuesBetween,
   HOTEL_CUES,
@@ -54,7 +55,7 @@ describe("hotelPose", () => {
     pose.floors.forEach((f, n) => {
       expect(f.x).toBe(0);
       expect(f.scale).toBe(1);
-      expect(f.y).toBeCloseTo((n + 0.5) * (0.2 / HOTEL_FLOORS), 10);
+      expect(f.y).toBeCloseTo((n + 0.5) * FLOOR_H, 10);
     });
   });
 

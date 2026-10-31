@@ -1,10 +1,11 @@
 import * as THREE from "three";
 
+import { FLOOR_H, floorGeometry, HOTEL_FLOORS } from "./buildings.ts";
 import { easeIn, easeOut, easeOutBack as overshoot } from "./effects.ts";
 
 export const HOUSE_MS = 1250;
 export const HOTEL_MS = 2300;
-export const HOTEL_FLOORS = 4;
+export { HOTEL_FLOORS };
 
 /** A sound the build plays when its progress passes `at`. */
 export type Cue = "tap" | "whir" | "thunk";
@@ -83,7 +84,6 @@ const FLOORS_FROM = 0.08;
 const FLOOR_SPAN = 0.17;
 const ROOF_FROM = FLOORS_FROM + FLOOR_SPAN * HOTEL_FLOORS;
 const FOLD_FROM = ROOF_FROM + 0.08;
-const FLOOR_H = 0.2 / HOTEL_FLOORS;
 const HOOK_HIGH = 0.5;
 const SLING = 0.045;
 
@@ -162,7 +162,6 @@ const JIB = box(0.74, 0.024, 0.026);
 const COUNTERWEIGHT = box(0.05, 0.05, 0.036);
 const CABLE = box(0.005, 1, 0.005);
 const HOOK = box(0.034, HOOK_H, 0.034);
-const FLOOR_BOX = shared(new THREE.BoxGeometry(0.46, FLOOR_H, 0.16));
 
 function part(geometry: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material);
@@ -176,7 +175,7 @@ export interface BuildingParts {
   group: THREE.Group;
   /** Body, roof and windows, so a house can rise as one. */
   core: THREE.Group;
-  body: THREE.Mesh<THREE.BoxGeometry, THREE.Material>;
+  body: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   roof: THREE.Mesh;
   windows: THREE.Mesh;
   /** Height of the body, where the roof sits. */
@@ -252,7 +251,7 @@ export function hotelConstruction(building: BuildingParts): Construction {
   crane.add(part(BASE, STEEL), mast, jib);
 
   const floors = Array.from({ length: HOTEL_FLOORS }, () => {
-    const floor = part(FLOOR_BOX, body.material);
+    const floor = part(floorGeometry(), body.material);
     floor.visible = false;
     return floor;
   });

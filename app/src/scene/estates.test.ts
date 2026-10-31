@@ -4,6 +4,7 @@ import * as THREE from "three";
 
 import type { PublicState } from "../../../shared/game.ts";
 import { HOTEL } from "../../../shared/game.ts";
+import { hotelGeometry, houseGeometry } from "./buildings.ts";
 import { HOTEL_MS, HOUSE_MS } from "./construction.ts";
 import { disposeTree, type Effects, type Tween } from "./effects.ts";
 import { Estates, setWindowGlow } from "./estates.ts";
@@ -46,11 +47,14 @@ function setup() {
   return { scene, estates, ...fx };
 }
 
-/** Everything in the scene that is not a building's own body, roof or windows. */
-function temporaryMeshes(scene: THREE.Scene): number {
+const finished = new Set<THREE.BufferGeometry>(
+  [houseGeometry(), hotelGeometry()].flatMap((g) => [g.body, g.roof, g.glow]),
+);
+
+function countTemporaryMeshes(scene: THREE.Scene): number {
   let count = 0;
   scene.traverse((o) => {
-    if (o instanceof THREE.Mesh && o.geometry.userData.shared) count++;
+    if (o instanceof THREE.Mesh && !finished.has(o.geometry)) count++;
   });
   return count;
 }
@@ -61,7 +65,7 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: 2, 3: HOTEL }), false);
     expect(log.tweens).toHaveLength(0);
     expect(scene.children).toHaveLength(3);
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
   });
 
   test("builds a new house under scaffolding, which is gone when it ends", () => {
@@ -71,9 +75,9 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: 1 }), true);
     expect(log.tweens).toHaveLength(1);
     expect(log.tweens[0]?.ms).toBe(HOUSE_MS);
-    expect(temporaryMeshes(scene)).toBeGreaterThan(0);
+    expect(countTemporaryMeshes(scene)).toBeGreaterThan(0);
     finish();
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
     expect(scene.children).toHaveLength(1);
   });
 
@@ -88,9 +92,9 @@ describe("Estates.sync", () => {
     expect(knocked).toHaveLength(4);
     expect(knocked.every((t) => t.ms < 600)).toBe(true);
     expect(hotel?.start).toBeGreaterThan(Math.max(...knocked.map((t) => t.start)));
-    expect(temporaryMeshes(scene)).toBeGreaterThan(0);
+    expect(countTemporaryMeshes(scene)).toBeGreaterThan(0);
     finish();
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
     expect(scene.children).toHaveLength(1);
     expect(houses.some((h) => scene.children.includes(h))).toBe(false);
   });
@@ -111,7 +115,7 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: 2 }), true);
     expect(log.tweens).toHaveLength(1);
     expect(log.tweens[0]?.ms).toBeLessThan(600);
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
     finish();
     expect(scene.children).toHaveLength(2);
   });
@@ -122,7 +126,7 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: 3 }), true);
     const pops = log.tweens.filter((t) => t.ms < 600);
     expect(pops).toHaveLength(4);
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
   });
 
   test("selling a building that is still going up leaves nothing behind", () => {
@@ -140,19 +144,20 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: HOTEL }), true);
     const tween = log.tweens[0];
     tween?.step(0.5);
-    expect(temporaryMeshes(scene)).toBeGreaterThan(0);
+    expect(countTemporaryMeshes(scene)).toBeGreaterThan(0);
     tween?.step(1);
     tween?.done?.();
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
     const meshes: THREE.Mesh[] = [];
     scene.traverse((o) => {
       if (o instanceof THREE.Mesh) meshes.push(o);
     });
     expect(meshes).toHaveLength(3);
     expect(meshes.every((m) => m.visible)).toBe(true);
-    const roof = meshes.find((m) => m.geometry instanceof THREE.ConeGeometry);
-    expect(roof?.scale.toArray()).toEqual([2.6, 1, 1]);
-    expect(roof?.position.y).toBeCloseTo(0.25, 10);
+    const hotel = hotelGeometry();
+    const roof = meshes.find((m) => m.geometry === hotel.roof);
+    expect(roof?.scale.toArray()).toEqual([1, 1, 1]);
+    expect(roof?.position.y).toBeCloseTo(hotel.height, 10);
   });
 
   test("selling a hotel that is still going up takes the crane down first", () => {
@@ -160,9 +165,9 @@ describe("Estates.sync", () => {
     estates.sync(stateWith({ 1: 0 }), true);
     estates.sync(stateWith({ 1: HOTEL }), true);
     log.tweens[0]?.step(0.5);
-    expect(temporaryMeshes(scene)).toBeGreaterThan(0);
+    expect(countTemporaryMeshes(scene)).toBeGreaterThan(0);
     estates.sync(stateWith({ 1: 0 }), true);
-    expect(temporaryMeshes(scene)).toBe(0);
+    expect(countTemporaryMeshes(scene)).toBe(0);
   });
 });
 
@@ -204,10 +209,13 @@ describe("shared parts", () => {
     setWindowGlow(1);
     const glowing: THREE.Mesh[] = [];
     scene.traverse((o) => {
-      if (o instanceof THREE.Mesh && (o.material as THREE.Material).userData.shared && o.visible) glowing.push(o);
+      if (o instanceof THREE.Mesh && o.geometry === houseGeometry().glow && o.visible) glowing.push(o);
     });
     expect(glowing).toHaveLength(1);
-    expect(glowing.every((m) => (m.material as THREE.Material).visible)).toBe(true);
+    const windows = glowing[0]?.material as THREE.MeshBasicMaterial;
+    expect(windows.userData.shared).toBe(true);
+    expect(windows.visible).toBe(true);
+    expect(windows.opacity).toBe(1);
     setWindowGlow(0);
   });
 });
