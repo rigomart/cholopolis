@@ -21,7 +21,7 @@ export function ReactionTray({ table, open = false }: { table: Table; open?: boo
         <button
           key={r.id}
           type="button"
-          class="reaction-button"
+          class={r.glyph.length > 2 ? "reaction-button word" : "reaction-button"}
           aria-label={`Reaccionar: ${r.label}`}
           title={r.label}
           aria-disabled={reactions.cooling}

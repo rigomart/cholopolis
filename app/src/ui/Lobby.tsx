@@ -78,6 +78,8 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
           </button>
         )}
 
+        {me && <ReactionTray table={table} open />}
+
         {me && (
           <fieldset class="pieces">
             <legend>Tu ficha</legend>
@@ -101,7 +103,6 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
             })}
           </fieldset>
         )}
-        {me && <ReactionTray table={table} open />}
 
         <fieldset class="lengths">
           <legend>Duración</legend>

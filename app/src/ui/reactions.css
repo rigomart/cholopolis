@@ -10,7 +10,13 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 0.35rem;
+  gap: 0.3rem;
+}
+
+.reaction-button.word {
+  padding: 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .toolbar .reaction-row {
@@ -134,5 +140,12 @@
 
   .player .reaction-bubble::before {
     display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .lobby .reaction-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
