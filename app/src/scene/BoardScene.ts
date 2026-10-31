@@ -5,11 +5,12 @@ import { SALIDA_BONUS } from "../../../shared/board.ts";
 import { DICE_WALL, type DiceHold } from "../../../shared/dice.ts";
 import { money, PLAYER_COLORS, type PublicState } from "../../../shared/game.ts";
 import { playMeow } from "../audio.ts";
+import { Atmosphere } from "./atmosphere.ts";
 import { CHICHA, drawBoard, FONT, INK } from "./boardTexture.ts";
 import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
-import { Estates } from "./estates.ts";
+import { Estates, setWindowGlow } from "./estates.ts";
 import { BOARD_SIZE, INNER, type Local, pieceSpot, sideOf, squareAt, squareCenter, toBoard } from "./layout.ts";
 import { buildPiece } from "./pieces.ts";
 import { registerThumbnails } from "./thumbnails.ts";
@@ -110,6 +111,7 @@ export class BoardScene {
   private readonly pieces = new Map<string, PieceView>();
   private readonly effects = new Effects(this.scene);
   private readonly estates = new Estates(this.scene, this.effects, TOP);
+  private readonly atmosphere: Atmosphere;
   private readonly observer: ResizeObserver;
   private readonly reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   private readonly container: HTMLElement;
@@ -144,7 +146,8 @@ export class BoardScene {
     this.controls.zoomToCursor = true;
     this.controls.target.copy(HOME_TARGET);
 
-    this.scene.add(new THREE.HemisphereLight("#fff3e0", "#3a2a80", 1.25));
+    const hemisphere = new THREE.HemisphereLight("#fff3e0", "#3a2a80", 1.25);
+    this.scene.add(hemisphere);
     const sun = new THREE.DirectionalLight("#ffffff", 1.7);
     sun.position.set(7, 16, 9);
     sun.castShadow = true;
@@ -188,6 +191,12 @@ export class BoardScene {
     this.board.receiveShadow = true;
     this.scene.add(this.board);
     this.scene.add(buildRim());
+    this.atmosphere = new Atmosphere(
+      this.scene,
+      { hemisphere, sun, boardFace: face, onNight: setWindowGlow, fogTunedAt: CAMERA_DISTANCE },
+      TOP,
+      this.reducedMotion,
+    );
 
     this.ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.24, 0.035, 8, 40),
@@ -251,6 +260,7 @@ export class BoardScene {
     this.controls.dispose();
     this.effects.dispose();
     this.cats.dispose();
+    this.atmosphere.dispose();
     this.thumbTarget?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -263,6 +273,7 @@ export class BoardScene {
     // The lobby slowly circles the board; when play starts, glide back to the standard view.
     if (state?.phase === "playing" && this.state?.phase === "lobby") this.resetCamera();
     this.state = state;
+    this.atmosphere.sync(state);
     this.controls.autoRotate = !this.reducedMotion && (!state || state.phase !== "playing");
     const snap = state !== null && (this.snapNext || !previous || skipsAhead(previous, state));
     this.dice.sync(state, snap);
@@ -279,6 +290,11 @@ export class BoardScene {
     if (snap) this.effects.finish();
     this.syncPieces(state, snap);
     this.estates.sync(state, !snap && !this.reducedMotion);
+  }
+
+  /** The server's clock, so a timed game's light matches its countdown on every screen. */
+  setClock(now: () => number): void {
+    this.atmosphere.setClock(now);
   }
 
   /** Makes the next `update` show its state as it is, without animating. */
@@ -525,6 +541,7 @@ export class BoardScene {
     this.animatePieces(now, dt);
     this.cats.update(dt, this.dice.positions);
     this.effects.update(now);
+    this.atmosphere.update(now, dt, this.camera.position.distanceTo(this.controls.target));
     this.animateCamera(now);
     if (!this.dice.held) this.controls.update();
     this.renderer.render(this.scene, this.camera);
@@ -540,6 +557,7 @@ export class BoardScene {
     this.controls.maxDistance = Math.max(34, this.homePosition().distanceTo(HOME_TARGET) * 1.25);
     this.camera.position.copy(this.homePosition());
     this.camera.updateProjectionMatrix();
+    this.atmosphere.resize(h * this.renderer.getPixelRatio(), this.camera);
   }
 
   private homePosition(): THREE.Vector3 {

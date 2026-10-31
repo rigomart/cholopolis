@@ -24,6 +24,7 @@ export function disposeTree(root: THREE.Object3D): void {
     if (!(o instanceof THREE.Mesh)) return;
     o.geometry.dispose();
     for (const m of [o.material].flat()) {
+      if (m.userData.shared) continue;
       (m as THREE.MeshStandardMaterial).map?.dispose();
       m.dispose();
     }
