@@ -221,7 +221,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           onInspect={setInspect}
           onNewRoom={onNewRoom}
           onHome={onHome}
-          onResetCamera={scene ? () => scene.resetCamera() : undefined}
+          camera={scene}
           shaking={shaking}
           onRoll={() => scene?.throwDice() || roll()}
           rolling={rolling || status !== "open" || shaking === you}

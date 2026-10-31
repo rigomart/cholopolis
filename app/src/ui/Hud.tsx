@@ -21,6 +21,7 @@ import {
 import { isMuted, setMuted } from "../audio.ts";
 import type { Table } from "../useTable.ts";
 import { Pawn } from "./bits.tsx";
+import { type BoardCamera, CameraControl } from "./CameraControl.tsx";
 import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
 import { Confetti } from "./Confetti.tsx";
 import { Pips } from "./Pips.tsx";
@@ -37,7 +38,8 @@ interface Props {
   onInspect: (index: number) => void;
   onNewRoom: () => void;
   onHome: () => void;
-  onResetCamera?: () => void;
+  /** The 3D board's camera; null without WebGL. */
+  camera: (BoardCamera & { focusPlayer: (id: string) => void }) | null;
   shaking: string | null;
   onRoll: () => void;
   rolling: boolean;
@@ -47,17 +49,7 @@ interface Props {
 
 type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
 
-export function Hud({
-  table,
-  onInspect,
-  onNewRoom,
-  onHome,
-  onResetCamera,
-  shaking,
-  onRoll,
-  rolling,
-  diceLanded,
-}: Props) {
+export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRoll, rolling, diceLanded }: Props) {
   const { state, you, spectators, send, serverNow } = table;
   const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
@@ -76,6 +68,7 @@ export function Hud({
         state={state}
         you={you}
         onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null}
+        onFocus={camera ? (id) => camera.focusPlayer(id) : null}
         settled={balances.state}
         list={playerList}
         now={serverNow}
@@ -83,28 +76,12 @@ export function Hud({
       />
       <MoneyFlows batches={balances.batches} list={playerList} />
       <Log entries={state.log} />
-      {onResetCamera && !sheet && (
-        <button
-          type="button"
-          class="camera-reset"
-          onClick={onResetCamera}
-          aria-label="Centrar tablero"
-          title="Centrar tablero"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"
-          >
-            <circle cx="12" cy="12" r="7" />
-            <path d="M12 2v6m0 8v6M2 12h6m8 0h6" />
-          </svg>
-          <span>Centrar tablero</span>
-        </button>
+      {camera && !sheet && (
+        <CameraControl
+          camera={camera}
+          pawnOf={me && !me.bankrupt ? me.id : (state.turn?.playerId ?? null)}
+          mine={Boolean(me && !me.bankrupt)}
+        />
       )}
 
       <div class="dock">
@@ -184,6 +161,7 @@ function Players({
   state,
   you,
   onTrade,
+  onFocus,
   settled,
   list,
   now,
@@ -192,18 +170,22 @@ function Players({
   state: PublicState;
   you: string | null;
   onTrade: ((id: string) => void) | null;
+  onFocus: ((id: string) => void) | null;
   settled: PublicState;
   list: RefObject<HTMLOListElement | null>;
   now: () => number;
   bubbles: Table["reactions"]["bubbles"];
 }) {
   const turnId = state.turn?.playerId;
+  const press = useLongPress();
 
   return (
     <ol ref={list} class="players" aria-label="Jugadores">
       {state.players.map((p) => {
         const isTurn = p.id === turnId;
         const tradable = onTrade && p.id !== you && !p.bankrupt;
+        const trade = tradable ? () => onTrade(p.id) : null;
+        const focus = onFocus && !p.bankrupt ? () => onFocus(p.id) : null;
         const cash = findPlayer(settled, p.id)?.cash ?? p.cash;
         const body = (
           <>
@@ -234,8 +216,17 @@ function Players({
               .filter(Boolean)
               .join(" ")}
           >
-            {tradable ? (
-              <button type="button" class="player" onClick={() => onTrade(p.id)} title={`Proponer trato a ${p.name}`}>
+            {focus ? (
+              <button
+                type="button"
+                class="player"
+                {...press(focus, trade)}
+                title={`Ver la ficha de ${p.name}${trade ? ". Mantén presionado para proponerle un trato" : ""}`}
+              >
+                {body}
+              </button>
+            ) : trade ? (
+              <button type="button" class="player" onClick={trade} title={`Proponer trato a ${p.name}`}>
                 {body}
               </button>
             ) : (
@@ -246,6 +237,41 @@ function Players({
       })}
     </ol>
   );
+}
+
+const LONG_PRESS_MS = 500;
+
+function useLongPress() {
+  const held = useRef<{ timer?: ReturnType<typeof setTimeout>; fired: boolean }>({ fired: false });
+  useEffect(() => () => clearTimeout(held.current.timer), []);
+  const release = () => clearTimeout(held.current.timer);
+  return (onTap: () => void, onHold: (() => void) | null) => {
+    return {
+      onClick: () => {
+        if (!held.current.fired) onTap();
+        held.current.fired = false;
+      },
+      onPointerDown: () => {
+        held.current.fired = false;
+        release();
+        if (onHold)
+          held.current.timer = setTimeout(() => {
+            held.current.fired = true;
+            onHold();
+          }, LONG_PRESS_MS);
+      },
+      onPointerUp: release,
+      onPointerLeave: release,
+      onPointerCancel: release,
+      onContextMenu: (e: Event) => {
+        if (!onHold) return;
+        e.preventDefault();
+        release();
+        held.current.fired = true;
+        onHold();
+      },
+    };
+  };
 }
 
 function CountBadge({ count }: { count: number }) {
