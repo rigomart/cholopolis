@@ -70,7 +70,7 @@ export function NameGate({ room, onEnter, onCreate }: Props) {
         <form class="gate-form" onSubmit={enter}>
           <div class="gate-fields">
             <div>
-              <label htmlFor="name">¿Cómo te llamamos en la mesa?</label>
+              <label htmlFor="name">Tu nombre</label>
               <input
                 id="name"
                 maxLength={20}
@@ -85,7 +85,7 @@ export function NameGate({ room, onEnter, onCreate }: Props) {
               />
             </div>
             <div>
-              <label htmlFor="code">¿Tienes un código?</label>
+              <label htmlFor="code">Código de mesa (opcional)</label>
               <input
                 id="code"
                 placeholder="Código o enlace"
@@ -116,14 +116,10 @@ export function NameGate({ room, onEnter, onCreate }: Props) {
               {problem.message}
             </p>
           )}
-          {problem?.field !== "code" && (
-            <p class="gate-note">
-              {target ? `Vas a entrar a la mesa ${target}.` : "Te sentamos en una mesa que esté esperando jugadores."}
-            </p>
-          )}
+          {target && problem?.field !== "code" && <p class="gate-note">Entrarás a la mesa {target}.</p>}
         </form>
         <button type="button" class="link gate-ranking" onClick={() => setRankingOpen(true)}>
-          Ver el ranking 🏆
+          Ranking 🏆
         </button>
       </main>
       {rankingOpen && <RankingSheet onClose={() => setRankingOpen(false)} />}

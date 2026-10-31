@@ -13,6 +13,7 @@ import { Lobby } from "./ui/Lobby.tsx";
 import { NameGate } from "./ui/NameGate.tsx";
 import { PawnBubbles } from "./ui/Reactions.tsx";
 import type { BoardLink } from "./ui/Trades.tsx";
+import { useShownState } from "./useShownState.ts";
 import { useTable } from "./useTable.ts";
 
 /** How long a throw may wait for the server before the dice go back. */
@@ -129,6 +130,7 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const diceLanded = useCallback((id: number) => scene?.diceLanded(id) ?? true, [scene]);
   const liftCard = useCallback((deck: Deck) => scene?.liftCard(deck), [scene]);
   const turnKey = `${state?.turn?.playerId}:${state?.turn?.stage}`;
+  const shown = useShownState(state, diceLanded);
 
   useEffect(() => {
     scene?.update(state);
@@ -173,8 +175,11 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   useEffect(() => () => scene?.onDiceInput(null), [scene]);
 
   useEffect(() => {
-    scene?.setDiceEnabled(Boolean(status === "open" && !rolling && state && canDragDice(state, you, state.rollId)));
-  }, [scene, state, status, you, rolling]);
+    const lastWalkDone = !shown.settling;
+    scene?.setDiceEnabled(
+      Boolean(status === "open" && !rolling && lastWalkDone && state && canDragDice(state, you, state.rollId)),
+    );
+  }, [scene, state, status, you, rolling, shown.settling]);
 
   useEffect(() => {
     if (
@@ -222,7 +227,8 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const askOwner = state && inspect !== null ? askableOwner(state, you, inspect) : null;
+  const shownState = shown.state;
+  const askOwner = shownState && inspect !== null ? askableOwner(shownState, you, inspect) : null;
 
   const leave = () => {
     send({ type: "leave" });
@@ -242,8 +248,8 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           camera={scene}
           shaking={shaking}
           onRoll={() => scene?.throwDice() || roll()}
-          rolling={rolling || status !== "open" || shaking === you}
-          diceLanded={diceLanded}
+          rolling={rolling || shown.settling || status !== "open" || shaking === you}
+          shown={shown}
           sheet={sheet}
           onSheet={setSheet}
           board={board}
@@ -254,9 +260,9 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
       {state && state.phase !== "lobby" && scene && (
         <PawnBubbles state={state} scene={scene} bubbles={table.reactions.bubbles} />
       )}
-      {state && inspect !== null && (
+      {shownState && inspect !== null && (
         <Deed
-          state={state}
+          state={shownState}
           index={inspect}
           onClose={() => setInspect(null)}
           onAsk={

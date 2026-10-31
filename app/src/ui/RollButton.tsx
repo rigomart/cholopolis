@@ -6,9 +6,9 @@ interface Props {
 
 export function RollButton({ label, onRoll, disabled }: Props) {
   return (
-    <button type="button" class="roll" onClick={onRoll} disabled={disabled}>
+    <button type="button" class="roll primary big" onClick={onRoll} disabled={disabled}>
       {label}
-      <span class="roll-hint">Tiro automático</span>
+      <span class="roll-hint">o agarra los dados</span>
     </button>
   );
 }

@@ -1,5 +1,5 @@
 import "./hud.css";
-import type { RefObject } from "preact";
+import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { type Deck, JAIL_FINE, square } from "../../../shared/board.ts";
@@ -19,10 +19,11 @@ import {
   rematchHost,
 } from "../../../shared/game.ts";
 import { isMuted, setMuted } from "../audio.ts";
+import type { ShownState } from "../useShownState.ts";
 import type { Table } from "../useTable.ts";
 import { Pawn } from "./bits.tsx";
 import { type BoardCamera, CameraControl } from "./CameraControl.tsx";
-import { MoneyFlows, RollingCash, useMoneyState } from "./Cash.tsx";
+import { MoneyFlows, RollingCash } from "./Cash.tsx";
 import { Confetti } from "./Confetti.tsx";
 import { Pips } from "./Pips.tsx";
 import { PostcardButton } from "./PostcardButton.tsx";
@@ -35,6 +36,8 @@ import { GameClock, TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./
 
 interface Props {
   table: Table;
+  /** What the HUD shows: the table's state, held back while a roll plays out on the board. */
+  shown: ShownState;
   onInspect: (index: number) => void;
   onNewRoom: () => void;
   onHome: () => void;
@@ -43,8 +46,6 @@ interface Props {
   shaking: string | null;
   onRoll: () => void;
   rolling: boolean;
-  /** Whether the dice thrown for roll `rollId` are on the board yet. */
-  diceLanded: (rollId: number) => boolean;
   sheet: Sheet;
   onSheet: (sheet: Sheet) => void;
   board: BoardLink;
@@ -60,6 +61,7 @@ export const dealSheet = (start: DealStart): Sheet => ({ kind: "trade", opened: 
 
 export function Hud({
   table,
+  shown,
   onInspect,
   onNewRoom,
   onHome,
@@ -67,23 +69,22 @@ export function Hud({
   shaking,
   onRoll,
   rolling,
-  diceLanded,
   sheet,
   onSheet: setSheet,
   board,
   boardPick,
   onCardShown,
 }: Props) {
-  const { state, you, spectators, send, serverNow } = table;
-  const [muted, setMutedState] = useState(isMuted);
+  const { you, spectators, send, serverNow } = table;
+  const state = shown.state;
   const playerList = useRef<HTMLOListElement>(null);
   useTurnAttention(state, you);
-  const balances = useMoneyState(state, diceLanded);
-  if (!state || !balances.state) return null;
+  if (!state) return null;
   const me = findPlayer(state, you);
   const act = (action: Action) => send({ type: "action", action });
   const playing = state.phase === "playing";
-  const canTrade = playing && me && !me.bankrupt;
+  const canTrade = Boolean(playing && me && !me.bankrupt);
+  const toggleProps = () => setSheet(sheet?.kind === "props" ? null : { kind: "props" });
 
   return (
     <div class="hud">
@@ -92,12 +93,11 @@ export function Hud({
         you={you}
         onTrade={canTrade ? (partner) => setSheet(dealSheet({ partner })) : null}
         onFocus={camera ? (id) => camera.focusPlayer(id) : null}
-        settled={balances.state}
         list={playerList}
         now={serverNow}
         bubbles={table.reactions.bubbles}
       />
-      <MoneyFlows batches={balances.batches} list={playerList} />
+      <MoneyFlows batches={shown.batches} list={playerList} />
       <Log entries={state.log} />
       {camera && !sheet && (
         <CameraControl
@@ -118,53 +118,44 @@ export function Hud({
           />
         )}
         <GameClock state={state} now={serverNow} />
-        <TurnClock state={state} you={you} shaking={shaking} now={serverNow} />
-        <ActionBar state={state} me={me} act={act} onRoll={onRoll} rolling={rolling} />
+        <TurnPanel
+          state={state}
+          me={me}
+          you={you}
+          shaking={shaking}
+          now={serverNow}
+          act={act}
+          onRoll={onRoll}
+          rolling={rolling}
+          onProps={() => setSheet({ kind: "props" })}
+        />
         <div class="toolbar">
-          {canTrade && (
+          {canTrade && me && (
             <>
-              <button type="button" onClick={() => setSheet(sheet?.kind === "props" ? null : { kind: "props" })}>
-                Mis propiedades <CountBadge count={ownedBy(state, me.id).length} />
+              <button type="button" class="tool" aria-pressed={sheet?.kind === "props"} onClick={toggleProps}>
+                <HouseIcon />
+                Propiedades <CountBadge count={ownedBy(state, me.id).length} />
               </button>
-              <button type="button" onClick={() => setSheet(dealSheet({ partner: null }))}>
-                Proponer trato
+              <button type="button" class="tool" onClick={() => setSheet(dealSheet({ partner: null }))}>
+                <SwapIcon />
+                Trato
               </button>
             </>
           )}
-          <ReactionTray table={table} />
-          <button
-            type="button"
-            class="link"
-            aria-pressed={!muted}
-            onClick={() => {
-              setMuted(!muted);
-              setMutedState(!muted);
-            }}
-          >
-            {muted ? "Sin sonido" : "Con sonido"}
-          </button>
-          {canTrade && (
-            <button
-              type="button"
-              class="link danger"
-              onClick={() => confirm("¿Seguro que te rindes? Quedas fuera de la partida.") && act({ type: "bankrupt" })}
-            >
-              Rendirme
-            </button>
+          {!me && (
+            <span class="spectating" title="Estás mirando esta partida">
+              <EyeIcon /> Mirando{spectators.length > 1 ? ` · ${spectators.length}` : ""}
+            </span>
           )}
+          <ReactionTray table={table} />
+          <MoreMenu onSurrender={canTrade && me && me.cash >= 0 ? () => act({ type: "bankrupt" }) : null} />
         </div>
-        {!me && (
-          <p class="spectating">
-            Estás mirando esta partida{spectators.length > 1 ? ` con ${spectators.length - 1} más` : ""}.
-          </p>
-        )}
       </div>
 
       <TurnBanner state={state} you={you} />
       <CardToast
         card={state.card}
         state={state}
-        diceLanded={diceLanded}
         yours={state.turn?.playerId === you && state.turn.stage === "roll"}
         held={shaking !== null && shaking === you}
         onShown={onCardShown}
@@ -203,7 +194,6 @@ function Players({
   you,
   onTrade,
   onFocus,
-  settled,
   list,
   now,
   bubbles,
@@ -212,7 +202,6 @@ function Players({
   you: string | null;
   onTrade: ((id: string) => void) | null;
   onFocus: ((id: string) => void) | null;
-  settled: PublicState;
   list: RefObject<HTMLOListElement | null>;
   now: () => number;
   bubbles: Table["reactions"]["bubbles"];
@@ -227,7 +216,8 @@ function Players({
         const tradable = onTrade && p.id !== you && !p.bankrupt;
         const trade = tradable ? () => onTrade(p.id) : null;
         const focus = onFocus && !p.bankrupt ? () => onFocus(p.id) : null;
-        const cash = findPlayer(settled, p.id)?.cash ?? p.cash;
+        const notes = [p.bankrupt && "en quiebra", p.inJail && "en el Penal", !p.connected && "desconectado"];
+        const note = notes.filter(Boolean).join(", ");
         const body = (
           <>
             <TurnRing state={state} playerId={p.id} now={now}>
@@ -236,24 +226,20 @@ function Players({
             {p.inJail && <span class="jail-bars" />}
             <span class="player-name">
               {p.name}
-              {p.id === you && <span class="muted"> (tú)</span>}
-              {p.bot && <span class="muted"> (bot)</span>}
+              {p.id === you && <span class="you-tag">tú</span>}
+              {!p.connected && !p.bankrupt && <OfflineIcon />}
             </span>
-            <RollingCash id={p.id} cash={cash} />
+            <RollingCash id={p.id} cash={p.cash} />
             <Pips state={state} playerId={p.id} />
             <ReactionBadge bubble={bubbles[p.id]} name={p.name} />
-            <span class="player-notes">
-              {p.bankrupt && "en quiebra"}
-              {p.inJail && "en el Penal"}
-              {!p.connected && !p.bankrupt && " desconectado"}
-            </span>
+            {note && <span class="visually-hidden">{note}</span>}
           </>
         );
         return (
           <li
             key={p.id}
             style={{ "--seat": PLAYER_COLORS[p.color] }}
-            class={[isTurn && "turn", p.bankrupt && "out", !p.connected && "away", cash < 0 && !p.bankrupt && "owing"]
+            class={[isTurn && "turn", p.bankrupt && "out", !p.connected && "away", p.cash < 0 && !p.bankrupt && "owing"]
               .filter(Boolean)
               .join(" ")}
           >
@@ -329,109 +315,117 @@ function CountBadge({ count }: { count: number }) {
   );
 }
 
-interface ActionBarProps {
+interface TurnPanelProps {
   state: PublicState;
   me: Player | undefined;
+  you: string | null;
+  shaking: string | null;
+  now: () => number;
   act: (a: Action) => void;
   onRoll: () => void;
   rolling: boolean;
+  onProps: () => void;
 }
 
-function ActionBar({ state, me, act, onRoll, rolling }: ActionBarProps) {
+function TurnPanel({ state, me, you, shaking, now, act, onRoll, rolling, onProps }: TurnPanelProps) {
   if (state.phase !== "playing" || !state.turn) return null;
-  const owing = debtors(state);
-  const myTurn = me?.id === state.turn.playerId;
+  const clock = (label?: string) => <TurnClock state={state} you={you} shaking={shaking} now={now} label={label} />;
+  const panel = (label: string | undefined, buttons: ComponentChildren, alert = false) => (
+    <div class={alert ? "actions alert-bar" : "actions"}>
+      {clock(label)}
+      <div class="actions-row">{buttons}</div>
+    </div>
+  );
 
   if (me && me.cash < 0 && !me.bankrupt) {
-    const parts = debtsOf(me).map(
-      (d) => `${money(d.amount)} ${d.to ? `a ${findPlayer(state, d.to)?.name}` : "al banco"}`,
-    );
-    const owed =
-      parts.length > 1
-        ? `${money(-me.cash)}: ${new Intl.ListFormat("es-PE").format(parts)}`
-        : (parts[0] ?? `${money(-me.cash)} al banco`);
-    return (
-      <div class="actions alert-bar">
-        <p>Debes {owed}. Vende casas o hipoteca en Mis propiedades, o negocia un trato.</p>
+    const to = debtsOf(me).map((d) => (d.to ? findPlayer(state, d.to)?.name : "el banco"));
+    const owed = `Debes ${money(-me.cash)}${to.length === 1 ? ` a ${to[0]}` : ""}`;
+    return panel(
+      owed,
+      <>
+        <button type="button" class="primary" onClick={onProps}>
+          Vender o hipotecar
+        </button>
         <button
           type="button"
           class="danger"
           onClick={() => confirm("¿Declararte en quiebra? Quedas fuera de la partida.") && act({ type: "bankrupt" })}
         >
-          Declararme en quiebra
+          Quiebra
         </button>
-      </div>
+      </>,
+      true,
     );
   }
-  // Someone else's turn or debt is the clock's to say.
-  if (owing.length > 0 || !myTurn || !me) return null;
+  if (debtors(state).length > 0 || me?.id !== state.turn.playerId) return clock();
 
   const here = square(me.position);
   switch (state.turn.stage) {
     case "roll":
-      return (
-        <div class="actions">
-          <p class="dice-instructions">Agarra los dados y suéltalos con un impulso.</p>
-          {me.inJail ? (
-            <>
-              <p>Estás en el Penal (intento {me.jailTurns + 1} de 3).</p>
-              <RollButton label="Tirar por dobles" onRoll={onRoll} disabled={rolling} />
-              <button type="button" disabled={me.cash < JAIL_FINE} onClick={() => act({ type: "payJailFine" })}>
-                Pagar fianza {money(JAIL_FINE)}
+      if (me.inJail) {
+        return panel(
+          `En el Penal · ${me.jailTurns + 1}/3`,
+          <>
+            <RollButton label="Tirar por dobles" onRoll={onRoll} disabled={rolling} />
+            <button type="button" disabled={me.cash < JAIL_FINE} onClick={() => act({ type: "payJailFine" })}>
+              Fianza {money(JAIL_FINE)}
+            </button>
+            {me.jailCards.length > 0 && (
+              <button type="button" onClick={() => act({ type: "useJailCard" })}>
+                Usar tarjeta
               </button>
-              {me.jailCards.length > 0 && (
-                <button type="button" onClick={() => act({ type: "useJailCard" })}>
-                  Usar tarjeta
-                </button>
-              )}
-            </>
-          ) : (
-            <RollButton
-              label={state.turn.doubles > 0 ? "¡Dobles! Tira otra vez" : "Tirar dados"}
-              onRoll={onRoll}
-              disabled={rolling}
-            />
-          )}
-        </div>
+            )}
+          </>,
+        );
+      }
+      return panel(
+        state.turn.doubles > 0 ? "¡Dobles! Otra vez" : undefined,
+        <RollButton label="Tirar dados" onRoll={onRoll} disabled={rolling} />,
       );
     case "buy": {
       const price = "price" in here ? here.price : 0;
-      return (
-        <div class="actions">
-          <p>
-            {here.name} no tiene dueño. Cuesta {money(price)}.
-            {me.cash < price && " No te alcanza: hipoteca algo o déjala pasar."}
-          </p>
-          <button type="button" class="primary big" disabled={me.cash < price} onClick={() => act({ type: "buy" })}>
-            Comprar por {money(price)}
+      const short = price - me.cash;
+      return panel(
+        here.name,
+        <>
+          <button type="button" class="primary big" disabled={short > 0} onClick={() => act({ type: "buy" })}>
+            Comprar {money(price)}
           </button>
           <button type="button" onClick={() => act({ type: "decline" })}>
             No comprar
           </button>
-        </div>
+          {short > 0 && <p class="actions-note">Te faltan {money(short)}</p>}
+        </>,
       );
     }
     case "done":
-      return (
-        <div class="actions">
-          <button type="button" class="primary big" onClick={() => act({ type: "endTurn" })}>
-            Terminar turno
-          </button>
-        </div>
+      return panel(
+        undefined,
+        <button type="button" class="primary big" onClick={() => act({ type: "endTurn" })}>
+          Terminar turno
+        </button>,
       );
   }
 }
 
+const isTurnAnnouncement = (e: LogEntry) => e.text.startsWith("Turno de ");
+
 function Log({ entries }: { entries: LogEntry[] }) {
   const list = useRef<HTMLOListElement>(null);
+  const [open, setOpen] = useState(false);
   const last = entries.at(-1)?.id;
   const [lastIdOnMount] = useState(last ?? 0);
+  const latest = entries.findLast((e) => !isTurnAnnouncement(e));
   useEffect(() => {
-    list.current?.scrollTo({ top: list.current.scrollHeight });
-  }, [last]);
+    if (open) list.current?.scrollTo({ top: list.current.scrollHeight });
+  }, [last, open]);
   return (
-    <details class="log" open={matchMedia("(min-width: 900px)").matches}>
-      <summary>Lo que pasó</summary>
+    <details class="log" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary aria-label="Lo que pasó">
+        <span key={latest?.id} class={latest && latest.id > lastIdOnMount ? "log-latest fresh" : "log-latest"}>
+          {latest?.text ?? "Lo que pasó"}
+        </span>
+      </summary>
       <ol ref={list} aria-live="polite">
         {entries.slice(-40).map((e) => (
           <li key={e.id} class={e.id > lastIdOnMount ? "fresh" : undefined} data-serial={String(e.id).padStart(3, "0")}>
@@ -447,21 +441,15 @@ function Log({ entries }: { entries: LogEntry[] }) {
 const CARD_MS = 5000;
 const CARD_QUEUED_MS = 2500;
 
-/**
- * Shows each newly drawn card for a few seconds, in order, each once the roll that drew it is on
- * the board: landed, cut short by a later roll, or never animated (reduced motion, reconnect).
- */
 function CardToast({
   card,
   state,
-  diceLanded,
   yours,
   held,
   onShown,
 }: {
   card: DrawnCard | null;
   state: PublicState;
-  diceLanded: (rollId: number) => boolean;
   /** Your roll is next: the card lets clicks through to the dice under it. */
   yours: boolean;
   /** You picked the dice up, so you're done reading. */
@@ -469,24 +457,22 @@ function CardToast({
   onShown: (deck: Deck) => void;
 }) {
   const [seenId, setSeenId] = useState(card?.id ?? 0);
-  const [queue, setQueue] = useState<{ card: DrawnCard; rollId: number }[]>([]);
+  const [queue, setQueue] = useState<DrawnCard[]>([]);
   const [shown, setShown] = useState<{ card: DrawnCard; at: number } | null>(null);
   if (card && card.id !== seenId) {
     setSeenId(card.id);
-    setQueue([...queue, { card, rollId: state.rollId }]);
+    setQueue([...queue, card]);
   }
   const next = queue[0];
   useEffect(() => {
     if (!next) return;
-    // Polled: the scene starts the throw after this effect runs, and it lands seconds later.
-    const id = setInterval(() => {
-      if (shown && performance.now() - shown.at < CARD_QUEUED_MS) return;
-      if (!diceLanded(next.rollId)) return;
-      setShown({ card: next.card, at: performance.now() });
+    const wait = shown ? Math.max(0, CARD_QUEUED_MS - (performance.now() - shown.at)) : 0;
+    const id = setTimeout(() => {
+      setShown({ card: next, at: performance.now() });
       setQueue((q) => q.slice(1));
-    }, 100);
-    return () => clearInterval(id);
-  }, [next, shown, diceLanded]);
+    }, wait);
+    return () => clearTimeout(id);
+  }, [next, shown]);
   useEffect(() => {
     if (shown) onShown(shown.card.deck);
   }, [shown, onShown]);
@@ -515,6 +501,66 @@ function CardToast({
   );
 }
 
+function MoreMenu({ onSurrender }: { onSurrender: (() => void) | null }) {
+  const [open, setOpen] = useState(false);
+  const [muted, setMutedState] = useState(isMuted);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    addEventListener("pointerdown", away);
+    addEventListener("keydown", escape);
+    return () => {
+      removeEventListener("pointerdown", away);
+      removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div ref={root} class="more">
+      <button
+        type="button"
+        class="tool icon"
+        aria-label="Más opciones"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen(!open)}
+      >
+        <MoreIcon />
+      </button>
+      {open && (
+        <div class="more-menu">
+          <button
+            type="button"
+            aria-pressed={!muted}
+            onClick={() => {
+              setMuted(!muted);
+              setMutedState(!muted);
+            }}
+          >
+            <SoundIcon off={muted} />
+            {muted ? "Sin sonido" : "Con sonido"}
+          </button>
+          {onSurrender && (
+            <button
+              type="button"
+              class="danger"
+              onClick={() => {
+                setOpen(false);
+                if (confirm("¿Seguro que te rindes? Quedas fuera de la partida.")) onSurrender();
+              }}
+            >
+              Rendirme
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Ended({
   state,
   you,
@@ -535,31 +581,27 @@ function Ended({
       <Confetti />
       <div class="panel">
         {winner && <Pawn player={winner} size={40} />}
-        <h2 id="ended-title">
-          {winner?.id === you ? "¡Ganaste Cholopolis!" : `¡${winner?.name ?? "Alguien"} ganó Cholopolis!`}
-        </h2>
-        {state.endedByTime ? (
-          <>
-            <p class="muted">Se acabó el tiempo. Gana quien tiene más patrimonio: efectivo, propiedades y edificios.</p>
-            <ol class="ranking">
-              {ranking(state).map(({ player, worth }) => (
-                <li
-                  key={player.id}
-                  class={player.id === state.winnerId ? "winner" : undefined}
-                  style={{ "--seat": PLAYER_COLORS[player.color] }}
-                >
-                  <Pawn player={player} size={14} />
-                  <span class="ranking-name">
-                    {player.name}
-                    {player.id === you && <span class="muted"> (tú)</span>}
-                  </span>
-                  <span class="ranking-worth">{money(worth)}</span>
-                </li>
-              ))}
-            </ol>
-          </>
-        ) : (
-          <p class="muted">Los demás quedaron en quiebra.</p>
+        <h2 id="ended-title">{winner?.id === you ? "¡Ganaste!" : `¡Ganó ${winner?.name ?? "alguien"}!`}</h2>
+        <p class="muted">
+          {state.endedByTime ? "Se acabó el tiempo: gana el mayor patrimonio." : "Los demás quebraron."}
+        </p>
+        {state.endedByTime && (
+          <ol class="ranking">
+            {ranking(state).map(({ player, worth }) => (
+              <li
+                key={player.id}
+                class={player.id === state.winnerId ? "winner" : undefined}
+                style={{ "--seat": PLAYER_COLORS[player.color] }}
+              >
+                <Pawn player={player} size={14} />
+                <span class="ranking-name">
+                  {player.name}
+                  {player.id === you && <span class="you-tag">tú</span>}
+                </span>
+                <span class="ranking-worth">{money(worth)}</span>
+              </li>
+            ))}
+          </ol>
         )}
         <GamePoints state={state} you={you} />
         <PostcardButton state={state} />
@@ -572,13 +614,81 @@ function Ended({
             asker && <p class="waiting">{asker.name} puede pedir la revancha.</p>
           )}
           <button type="button" class={asker?.id === you ? undefined : "primary"} onClick={onNewRoom}>
-            Abrir otra mesa
+            Otra mesa
           </button>
           <button type="button" onClick={onHome}>
-            Volver al inicio
+            Inicio
           </button>
         </div>
       </div>
     </dialog>
+  );
+}
+
+const icon = {
+  width: 18,
+  height: 18,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  "stroke-width": 2.2,
+  "stroke-linecap": "round",
+  "stroke-linejoin": "round",
+  "aria-hidden": "true",
+} as const;
+
+function HouseIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M3 11 12 4l9 7" />
+      <path d="M5 10v10h14V10" />
+      <path d="M10 20v-6h4v6" />
+    </svg>
+  );
+}
+
+function SwapIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M4 8h14l-4-4" />
+      <path d="M20 16H6l4 4" />
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg {...icon}>
+      <circle cx="5" cy="12" r="1.3" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" />
+      <circle cx="19" cy="12" r="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SoundIcon({ off }: { off: boolean }) {
+  return (
+    <svg {...icon}>
+      <path d="M4 10v4h4l5 4V6L8 10H4Z" />
+      {off ? <path d="m17 9 5 6m0-6-5 6" /> : <path d="M17 9a4 4 0 0 1 0 6m2.5-8.5a7.5 7.5 0 0 1 0 11" />}
+    </svg>
+  );
+}
+
+function OfflineIcon() {
+  return (
+    <svg {...icon} width={14} height={14} class="offline-icon">
+      <path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0" />
+      <path d="m3 3 18 18" />
+    </svg>
   );
 }

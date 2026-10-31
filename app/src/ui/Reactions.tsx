@@ -39,8 +39,16 @@ export function ReactionTray({ table, open = false }: { table: Table; open?: boo
   if (open) return buttons;
   return (
     <>
-      <button type="button" class="link reaction-toggle" aria-expanded={shown} onClick={() => setExpanded(!expanded)}>
-        Reaccionar
+      <button
+        ref={toggle}
+        type="button"
+        class="tool icon reaction-toggle"
+        aria-label="Reaccionar"
+        title="Reaccionar"
+        aria-expanded={shown}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span aria-hidden="true">😀</span>
       </button>
       {shown && buttons}
     </>
