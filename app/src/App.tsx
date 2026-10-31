@@ -115,6 +115,8 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
     if (status === "reconnecting") scene?.snapNextUpdate();
   }, [scene, status]);
 
+  useEffect(() => scene?.setClock(table.serverNow), [scene, table.serverNow]);
+
   useEffect(() => {
     scene?.onPick(setInspect);
     return () => {

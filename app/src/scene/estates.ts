@@ -227,6 +227,21 @@ export class Estates {
   }
 }
 
+const SHARED_WINDOW_MATERIAL = new THREE.MeshBasicMaterial({
+  color: "#ffd27a",
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+});
+SHARED_WINDOW_MATERIAL.userData.shared = true;
+SHARED_WINDOW_MATERIAL.visible = false;
+
+/** How much the windows glow, 0 by day to 1 at night. */
+export function setWindowGlow(night: number): void {
+  SHARED_WINDOW_MATERIAL.opacity = night;
+  SHARED_WINDOW_MATERIAL.visible = night > 0.001;
+}
+
 function building(hotel: boolean): THREE.Group {
   const color = hotel ? "#e5322d" : "#16b455";
   const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
@@ -239,7 +254,12 @@ function building(hotel: boolean): THREE.Group {
   roof.scale.x = hotel ? 2.6 : 1;
   roof.position.y = h + 0.05;
   for (const m of [body, roof]) m.castShadow = true;
+  const windows = new THREE.Mesh(
+    new THREE.BoxGeometry(hotel ? 0.36 : 0.06, hotel ? 0.05 : 0.04, 0.172),
+    SHARED_WINDOW_MATERIAL,
+  );
+  windows.position.y = h * 0.55;
   const group = new THREE.Group();
-  group.add(body, roof);
+  group.add(body, roof, windows);
   return group;
 }
