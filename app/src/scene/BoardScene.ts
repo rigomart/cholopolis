@@ -483,6 +483,8 @@ export class BoardScene {
 
   /** The board as it stands, from a fixed camera, for the end-of-game postcard. */
   snapshot(width: number, height: number): HTMLCanvasElement {
+    // A building still going up would show its scaffolding.
+    this.effects.finish();
     return snapshotScene(
       this.renderer,
       this.scene,

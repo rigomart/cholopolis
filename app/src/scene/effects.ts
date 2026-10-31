@@ -22,7 +22,7 @@ export const BOUNCE_FIRST_HIT = 0.36;
 export function disposeTree(root: THREE.Object3D): void {
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
-    o.geometry.dispose();
+    if (!o.geometry.userData.shared) o.geometry.dispose();
     for (const m of [o.material].flat()) {
       if (m.userData.shared) continue;
       (m as THREE.MeshStandardMaterial).map?.dispose();
