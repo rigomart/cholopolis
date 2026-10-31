@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 
 import { MAX_PLAYERS } from "../../../shared/board.ts";
-import { findPlayer } from "../../../shared/game.ts";
+import { findPlayer, TIME_LIMITS } from "../../../shared/game.ts";
 import { PIECES } from "../../../shared/pieces.ts";
 import type { Table } from "../useTable.ts";
 import { Pawn, Wordmark } from "./bits.tsx";
@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
-  const { state, you, spectators, send } = table;
+  const { state, you, spectators, send, name } = table;
   const [copied, setCopied] = useState(false);
   if (!state) return null;
   const me = findPlayer(state, you);
@@ -22,6 +22,8 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
   const hosting = me !== undefined && me.id === state.hostId;
   const present = state.players.filter((p) => p.connected).length;
   const link = `${location.origin}/mesa/${room}`;
+  const seatFree = state.players.length < MAX_PLAYERS || state.players.some((p) => !p.connected);
+  const isHost = me?.id === state.hostId;
 
   const copy = async () => {
     await navigator.clipboard.writeText(link);
@@ -98,6 +100,29 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
           </fieldset>
         )}
 
+        <fieldset class="lengths">
+          <legend>Duración</legend>
+          {isHost ? (
+            [null, ...TIME_LIMITS].map((minutes) => (
+              <button
+                key={minutes ?? "none"}
+                type="button"
+                class={minutes === state.timeLimit ? "length mine" : "length"}
+                aria-pressed={minutes === state.timeLimit}
+                onClick={() => send({ type: "action", action: { type: "setTimeLimit", minutes } })}
+              >
+                {minutes === null ? "Sin límite" : `${minutes} min`}
+              </button>
+            ))
+          ) : (
+            <p class="muted">
+              {state.timeLimit === null
+                ? "Sin límite de tiempo."
+                : `${state.timeLimit} minutos. Gana quien tenga más patrimonio al terminar.`}
+            </p>
+          )}
+        </fieldset>
+
         {me ? (
           hosting ? (
             <button
@@ -111,6 +136,13 @@ export function Lobby({ table, room, onLeave, onNewRoom }: Props) {
           ) : (
             <p class="waiting">Esperando a que {host?.name ?? "el anfitrión"} empiece la partida.</p>
           )
+        ) : seatFree ? (
+          <>
+            <p class="waiting">Hay un lugar libre en la mesa.</p>
+            <button type="button" class="primary" onClick={() => send({ type: "join", name })}>
+              Sentarme
+            </button>
+          </>
         ) : (
           <>
             <p class="waiting">Esta mesa está llena. Puedes mirar o abrir otra.</p>

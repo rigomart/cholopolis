@@ -142,7 +142,7 @@ export class Table extends DurableObject<Env> {
         case "action": {
           const id = att.playerId;
           if (!id) return this.send(ws, { type: "error", message: "Estás mirando esta partida." });
-          return await this.commit((g) => act(g, id, msg.action, rng));
+          return await this.commit((g) => act(g, id, msg.action, rng, Date.now()));
         }
       }
     } catch (error) {
@@ -186,7 +186,7 @@ export class Table extends DurableObject<Env> {
         return await this.playBot();
       case "clock":
         this.waitingOn = "";
-        return await this.commit((g) => autoPlay(g, rng));
+        return await this.commit((g) => autoPlay(g, rng, Date.now()));
       case "wait":
         return await this.schedule();
     }
@@ -200,7 +200,7 @@ export class Table extends DurableObject<Env> {
     try {
       await this.commit((g) => {
         const move = botMove(g);
-        if (move) act(g, move.playerId, move.action, rng);
+        if (move) act(g, move.playerId, move.action, rng, Date.now());
       });
     } catch (error) {
       if (!(error instanceof GameError)) {

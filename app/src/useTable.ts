@@ -7,6 +7,7 @@ import { browserToken } from "./session.ts";
 export type Status = "connecting" | "open" | "reconnecting";
 
 export interface Table {
+  name: string;
   status: Status;
   state: PublicState | null;
   you: string | null;
@@ -94,5 +95,5 @@ export function useTable(room: string, name: string): Table {
 
   const serverNow = useCallback(() => Date.now() + skew.current, []);
 
-  return { status, state, you, spectators, error, diceHold, send, serverNow };
+  return { name, status, state, you, spectators, error, diceHold, send, serverNow };
 }
