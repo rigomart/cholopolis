@@ -30,7 +30,7 @@ import { Properties } from "./Properties.tsx";
 import { GamePoints } from "./Ranking.tsx";
 import { ReactionBadge, ReactionTray } from "./Reactions.tsx";
 import { RollButton } from "./RollButton.tsx";
-import { TradeComposer, TradeOffers } from "./Trades.tsx";
+import { type BoardLink, type BoardPick, type DealStart, TradeComposer, TradeOffers } from "./Trades.tsx";
 import { GameClock, TurnBanner, TurnClock, TurnRing, useTurnAttention } from "./TurnClock.tsx";
 
 interface Props {
@@ -45,13 +45,33 @@ interface Props {
   rolling: boolean;
   /** Whether the dice thrown for roll `rollId` are on the board yet. */
   diceLanded: (rollId: number) => boolean;
+  sheet: Sheet;
+  onSheet: (sheet: Sheet) => void;
+  board: BoardLink;
+  boardPick: BoardPick;
 }
 
-type Sheet = { kind: "props" } | { kind: "trade"; partner: string | null } | null;
+/** The side sheet that is open; `opened` tells a fresh deal table from the one already open. */
+export type Sheet = { kind: "props" } | ({ kind: "trade"; opened: number } & DealStart) | null;
 
-export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRoll, rolling, diceLanded }: Props) {
+export const dealSheet = (start: DealStart): Sheet => ({ kind: "trade", opened: Date.now(), ...start });
+
+export function Hud({
+  table,
+  onInspect,
+  onNewRoom,
+  onHome,
+  camera,
+  shaking,
+  onRoll,
+  rolling,
+  diceLanded,
+  sheet,
+  onSheet: setSheet,
+  board,
+  boardPick,
+}: Props) {
   const { state, you, spectators, send, serverNow } = table;
-  const [sheet, setSheet] = useState<Sheet>(null);
   const [muted, setMutedState] = useState(isMuted);
   const playerList = useRef<HTMLOListElement>(null);
   useTurnAttention(state, you);
@@ -67,7 +87,7 @@ export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRo
       <Players
         state={state}
         you={you}
-        onTrade={canTrade ? (partner) => setSheet({ kind: "trade", partner }) : null}
+        onTrade={canTrade ? (partner) => setSheet(dealSheet({ partner })) : null}
         onFocus={camera ? (id) => camera.focusPlayer(id) : null}
         settled={balances.state}
         list={playerList}
@@ -85,7 +105,15 @@ export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRo
       )}
 
       <div class="dock">
-        {me && !me.bankrupt && <TradeOffers state={state} me={me} act={act} />}
+        {me && !me.bankrupt && (
+          <TradeOffers
+            state={state}
+            me={me}
+            act={act}
+            onCounter={(start) => setSheet(dealSheet(start))}
+            board={board}
+          />
+        )}
         <GameClock state={state} now={serverNow} />
         <TurnClock state={state} you={you} shaking={shaking} now={serverNow} />
         <ActionBar state={state} me={me} act={act} onRoll={onRoll} rolling={rolling} />
@@ -95,7 +123,7 @@ export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRo
               <button type="button" onClick={() => setSheet(sheet?.kind === "props" ? null : { kind: "props" })}>
                 Mis propiedades <CountBadge count={ownedBy(state, me.id).length} />
               </button>
-              <button type="button" onClick={() => setSheet({ kind: "trade", partner: null })}>
+              <button type="button" onClick={() => setSheet(dealSheet({ partner: null }))}>
                 Proponer trato
               </button>
             </>
@@ -142,7 +170,16 @@ export function Hud({ table, onInspect, onNewRoom, onHome, camera, shaking, onRo
         <Properties state={state} me={me} act={act} onInspect={onInspect} onClose={() => setSheet(null)} />
       )}
       {sheet?.kind === "trade" && me && (
-        <TradeComposer state={state} me={me} initialPartner={sheet.partner} act={act} onClose={() => setSheet(null)} />
+        <TradeComposer
+          key={sheet.opened}
+          state={state}
+          me={me}
+          start={sheet}
+          act={act}
+          onClose={() => setSheet(null)}
+          board={board}
+          boardPick={boardPick}
+        />
       )}
       {state.phase === "ended" && (
         <Ended

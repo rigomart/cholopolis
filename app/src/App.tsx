@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { DICE_HOLD_EXPIRE_MS, type DiceToss } from "../../shared/dice.ts";
 import { canDragDice } from "../../shared/game.ts";
 import { registerBoardSnapshot } from "./postcard.ts";
 import { BoardScene } from "./scene/BoardScene.ts";
 import { createRoom, findOpenRoom, goToRoom, roomFromPath, saveName } from "./session.ts";
+import { askableOwner } from "./ui/deal.ts";
 import { Deed } from "./ui/Deed.tsx";
-import { Hud } from "./ui/Hud.tsx";
+import { dealSheet, Hud, type Sheet } from "./ui/Hud.tsx";
 import { Lobby } from "./ui/Lobby.tsx";
 import { NameGate } from "./ui/NameGate.tsx";
 import { PawnBubbles } from "./ui/Reactions.tsx";
+import type { BoardLink } from "./ui/Trades.tsx";
 import { useTable } from "./useTable.ts";
 
 /** How long a throw may wait for the server before the dice go back. */
@@ -107,6 +109,18 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
   const table = useTable(seat.room, seat.name);
   const { state, status, error, diceHold, you, send } = table;
   const [inspect, setInspect] = useState<number | null>(null);
+  const [sheet, setSheet] = useState<Sheet>(null);
+  const boardPick = useCallback(
+    (handler: ((index: number) => void) | null) => scene?.onPick(handler ?? setInspect),
+    [scene],
+  );
+  const board = useMemo<BoardLink>(
+    () => ({
+      locate: (source, indices) => scene?.highlightSquares(indices, source),
+      focus: (index) => scene?.focusSquare(index),
+    }),
+    [scene],
+  );
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const [shaking, setShaking] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
@@ -206,6 +220,8 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
     return () => clearTimeout(id);
   }, [toast]);
 
+  const askOwner = state && inspect !== null ? askableOwner(state, you, inspect) : null;
+
   const leave = () => {
     send({ type: "leave" });
     onHome();
@@ -226,12 +242,30 @@ function TableView({ seat, scene, onNewRoom, onHome }: TableProps) {
           onRoll={() => scene?.throwDice() || roll()}
           rolling={rolling || status !== "open" || shaking === you}
           diceLanded={diceLanded}
+          sheet={sheet}
+          onSheet={setSheet}
+          board={board}
+          boardPick={boardPick}
         />
       )}
       {state && state.phase !== "lobby" && scene && (
         <PawnBubbles state={state} scene={scene} bubbles={table.reactions.bubbles} />
       )}
-      {state && inspect !== null && <Deed state={state} index={inspect} onClose={() => setInspect(null)} />}
+      {state && inspect !== null && (
+        <Deed
+          state={state}
+          index={inspect}
+          onClose={() => setInspect(null)}
+          onAsk={
+            askOwner
+              ? () => {
+                  setInspect(null);
+                  setSheet(dealSheet({ partner: askOwner, get: { squares: [inspect], cash: 0, jailCards: 0 } }));
+                }
+              : undefined
+          }
+        />
+      )}
       {status === "reconnecting" && <p class="banner">Se cortó la conexión. Reconectando…</p>}
       {toast && (
         <p class="toast" role="alert">

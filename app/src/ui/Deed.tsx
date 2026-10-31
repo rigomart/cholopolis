@@ -10,7 +10,18 @@ const CORNER_TEXT: Record<string, string> = {
 };
 
 /** The title deed of a square: what it costs, what it charges, who owns it. */
-export function Deed({ state, index, onClose }: { state: PublicState; index: number; onClose: () => void }) {
+export function Deed({
+  state,
+  index,
+  onClose,
+  onAsk,
+}: {
+  state: PublicState;
+  index: number;
+  onClose: () => void;
+  /** Opens a deal asking the owner for this square. */
+  onAsk?: () => void;
+}) {
   const sq = square(index);
   const prop = state.props[index];
   const owner = findPlayer(state, prop?.owner);
@@ -85,6 +96,11 @@ export function Deed({ state, index, onClose }: { state: PublicState; index: num
               <>
                 <Pawn player={owner} size={14} /> De {owner.name}
                 {prop.mortgaged && <span class="tag">hipotecada</span>}
+                {onAsk && (
+                  <button type="button" class="deed-ask" onClick={onAsk}>
+                    Pedir
+                  </button>
+                )}
               </>
             ) : (
               <>Sin dueño. Cuesta {money(sq.price)}.</>

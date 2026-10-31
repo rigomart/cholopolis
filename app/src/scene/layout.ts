@@ -72,3 +72,11 @@ export function squareAt(p: Local): number | null {
   }
   return null;
 }
+
+/** A square's footprint on the board: its centre, and its size along x and z. */
+export function squareBounds(index: number): Local & { width: number; depth: number } {
+  const c = squareCenter(index);
+  if (isCorner(index)) return { ...c, width: 2, depth: 2 };
+  const across = sideOf(index) % 2 === 0;
+  return { ...c, width: across ? 1 : 2, depth: across ? 2 : 1 };
+}

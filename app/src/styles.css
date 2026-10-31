@@ -1199,49 +1199,11 @@ button.player:hover:not(:disabled) {
   padding: 0.25em 0.7em;
 }
 
-.trade-form {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.field {
-  display: grid;
-  gap: 0.3rem;
-  font-weight: 800;
-  font-size: 0.9rem;
-}
-
-.trade-cols {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.trade-side {
-  margin: 0;
-  border: 2px solid var(--yellow);
-  border-radius: 10px;
-  padding: 0.6rem 0.75rem 0.8rem;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.trade-side legend {
-  padding: 0.05em 0.5em;
-  border-radius: 5px;
-  background: var(--yellow);
-  color: var(--black);
-  font-weight: 800;
-}
-
 .check {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.92rem;
-}
-
-.check.disabled {
-  opacity: 0.5;
 }
 
 /* ------------------------------------------------------------------ deed */
