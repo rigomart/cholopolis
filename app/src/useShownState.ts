@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
-import type { PublicState } from "../../shared/game.ts";
+import type { DrawnCard, PublicState } from "../../shared/game.ts";
+import { CARD_PAUSE_MS } from "./scene/cards.ts";
 import { prefersReducedMotion } from "./ui/Cash.tsx";
 import { type Flow, flowsAlong, throughSalida } from "./ui/flows.ts";
 
 const DICE_WAIT_MS = 4000;
 const WALK_WAIT_MS = 4000;
-/** Pawn timings in BoardScene: one hop per square, a jump to the Penal. */
+/** Pawn timings in BoardScene: one hop per square, a jump to the Penal, a stop to show a drawn card. */
 const HOP_MS = 190;
 const REDUCED_HOP_MS = 60;
 const JUMP_MS = 700;
@@ -31,11 +32,23 @@ interface Pending {
   steps: { at: number; state: PublicState }[] | null;
 }
 
-function walkTimes(next: PublicState, start: number): { salida: number | null; land: number } {
+interface WalkTimes {
+  salida: number | null;
+  /** When the pawn stops on each card's square, with the card it drew there. */
+  cards: { at: number; card: DrawnCard }[];
+  land: number;
+}
+
+function walkTimes(next: PublicState, start: number): WalkTimes {
   const hop = prefersReducedMotion() ? REDUCED_HOP_MS : HOP_MS;
   let t = start;
   let salida: number | null = null;
+  const cards: WalkTimes["cards"] = [];
   for (const m of next.moves) {
+    if (m.card) {
+      cards.push({ at: t, card: m.card });
+      t += CARD_PAUSE_MS;
+    }
     if (m.steps === null) {
       t += JUMP_MS;
       continue;
@@ -43,7 +56,29 @@ function walkTimes(next: PublicState, start: number): { salida: number | null; l
     if (salida === null && m.steps > 0 && m.from + m.steps >= 40) salida = t + (40 - m.from) * hop;
     t += Math.abs(m.steps) * hop;
   }
-  return { salida, land: Math.min(t, start + WALK_WAIT_MS) };
+  const cap = start + WALK_WAIT_MS + cards.length * CARD_PAUSE_MS;
+  return { salida, cards, land: Math.min(t, cap) };
+}
+
+/** The steps a roll's update shows on its way in: passing Salida and each card drawn, in walking order, then the update. */
+function walkSteps(last: PublicState | null, next: PublicState, walk: WalkTimes): { at: number; state: PublicState }[] {
+  if (!last) return [{ at: walk.land, state: next }];
+  const events: { at: number; apply: (s: PublicState) => PublicState | null }[] = walk.cards.map(({ at, card }) => ({
+    at: Math.min(at, walk.land),
+    apply: (s) => ({ ...s, card }),
+  }));
+  if (walk.salida !== null && walk.salida < walk.land)
+    events.push({ at: walk.salida, apply: (s) => throughSalida(s, next) });
+  events.sort((a, b) => a.at - b.at);
+  const steps: { at: number; state: PublicState }[] = [];
+  let state = last;
+  for (const e of events) {
+    const reached = e.apply(state);
+    if (!reached) continue;
+    state = reached;
+    steps.push({ at: e.at, state });
+  }
+  return [...steps, { at: walk.land, state: next }];
 }
 
 /**
@@ -75,12 +110,7 @@ export function useShownState(state: PublicState | null, diceLanded: (rollId: nu
       const overtaken = queue.some((p) => p !== head && p.rollId !== null);
       if (head.rollId !== null && !head.steps) {
         if (!diceLanded(head.rollId) && now - head.arrived < DICE_WAIT_MS && !overtaken) break;
-        const walk = walkTimes(head.state, now);
-        const salida = last && walk.salida !== null && walk.salida < walk.land ? throughSalida(last, head.state) : null;
-        head.steps = [
-          ...(salida && walk.salida !== null ? [{ at: walk.salida, state: salida }] : []),
-          { at: walk.land, state: head.state },
-        ];
+        head.steps = walkSteps(last, head.state, walkTimes(head.state, now));
       }
       if (!head.steps) reach(head.state);
       else {

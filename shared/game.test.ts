@@ -502,6 +502,17 @@ describe("cards", () => {
     expect(g.card?.text).toContain("cumpleaños");
   });
 
+  test("a card that moves the piece tags its first move with the card", () => {
+    const g = playing();
+    g.decks.caja = [CARDS.caja.findIndex((c) => c.effect.type === "moveTo")];
+    run(g, "a", { type: "roll" }, dice(1, 1));
+    const [rolled, sent] = g.moves;
+    expect(rolled?.card).toBeUndefined();
+    expect(rolled?.to).toBe(2);
+    expect(sent?.card).toEqual(g.card ?? undefined);
+    expect(sent?.to).toBe(0);
+  });
+
   test("a jail card leaves the deck until it is used", () => {
     const g = playing();
     const jailCard = CARDS.caja.findIndex((c) => c.effect.type === "jailCard");

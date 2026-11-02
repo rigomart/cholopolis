@@ -9,7 +9,7 @@ import { Backdrop } from "./backdrop.ts";
 import { drawBoard, FONT, INK } from "./boardTexture.ts";
 import { CameraRig } from "./CameraRig.ts";
 import { FOV, HOME_DISTANCE, spotView, type ViewName } from "./cameraViews.ts";
-import { CardStacks } from "./cards.ts";
+import { CARD_PAUSE_MS, CardStacks } from "./cards.ts";
 import { Cats } from "./cats.ts";
 import { type DiceInput, DiceRig } from "./DiceRig.ts";
 import { disposeTree, easeIn, easeOut, Effects, fade } from "./effects.ts";
@@ -32,6 +32,8 @@ interface Hop {
   to: THREE.Vector3;
   ms: number;
   height: number;
+  /** Stands still, facing the way it came: the pawn waiting on a card's square. */
+  hold?: boolean;
   onLand?: () => void;
 }
 
@@ -483,6 +485,10 @@ export class BoardScene {
       const walkFrom = view.queue.length;
       for (const move of moves) {
         view.waitUntil = Math.max(view.waitUntil, walkAfter);
+        if (move.card) {
+          const stop = view.queue.at(-1)?.to ?? view.hop?.to ?? view.mesh.position.clone();
+          view.queue.push({ to: stop, ms: CARD_PAUSE_MS, height: 0, hold: true });
+        }
         if (move.steps === null) {
           view.queue.push({ to: vec(pieceSpot(move.to, 0, 1)), ms: 700, height: 2.2 });
           continue;
@@ -557,7 +563,8 @@ export class BoardScene {
         view.mesh.position.y = TOP + Math.sin(t * Math.PI) * hop.height;
         const dx = hop.to.x - hop.from.x;
         const dz = hop.to.z - hop.from.z;
-        if (Math.hypot(dx, dz) > 0.2 && hop.height < 1) target = headingOf(dx, dz);
+        if (hop.hold) target = view.heading;
+        else if (Math.hypot(dx, dz) > 0.2 && hop.height < 1) target = headingOf(dx, dz);
         if (t >= 1) {
           view.hop = null;
           hop.onLand?.();

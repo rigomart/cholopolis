@@ -11,6 +11,8 @@ const CARD_D = 0.82;
 const STACK_H = 0.15;
 const CARD_THICKNESS = 0.012;
 export const LIFT_MS = 1500;
+/** A pawn a card sends elsewhere waits this long on the card's square, so the card shows first. */
+export const CARD_PAUSE_MS = 1800;
 const LIFT_HEIGHT = 0.55;
 
 const DECKS: Record<Deck, { title: string; field: string; icon: "clover" | "coins"; at: [number, number] }> = {
