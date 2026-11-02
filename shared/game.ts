@@ -16,7 +16,7 @@ import {
   STATION_RENTS,
   unmortgageCost,
 } from "./board.ts";
-import { CARDS } from "./cards.ts";
+import { type CardEffect, CARDS } from "./cards.ts";
 import { type DiceToss, parseDiceToss } from "./dice.ts";
 import { PIECES } from "./pieces.ts";
 import { type GameStats, recordPayment, recordRent, statsOf } from "./stats.ts";
@@ -125,6 +125,8 @@ export interface Move {
   to: number;
   /** Squares walked (negative walks backwards); null jumps. */
   steps: number | null;
+  /** The card that made this move, on its first move only: clients stop and show it before walking on. */
+  card?: DrawnCard;
 }
 
 export interface LogEntry {
@@ -948,10 +950,16 @@ function drawCard(g: GameState, p: Player, deck: Deck, diceTotal: number): void 
   const card = CARDS[deck][index];
   if (!card) fail("No quedan tarjetas.");
   if (card.effect.type !== "jailCard") pile.push(index);
-  g.card = { id: g.nextId++, deck, text: card.text, playerId: p.id };
+  const drawn: DrawnCard = { id: g.nextId++, deck, text: card.text, playerId: p.id };
+  g.card = drawn;
   log(g, `${p.name} sacó ${deck === "suerte" ? "Suerte" : "Caja Municipal"}: “${card.text}”`);
+  const before = g.moves.length;
+  applyCard(g, p, deck, card.effect, diceTotal);
+  const moved = g.moves[before];
+  if (moved) moved.card = drawn;
+}
 
-  const e = card.effect;
+function applyCard(g: GameState, p: Player, deck: Deck, e: CardEffect, diceTotal: number): void {
   switch (e.type) {
     case "money":
       if (e.amount >= 0) p.cash += e.amount;
